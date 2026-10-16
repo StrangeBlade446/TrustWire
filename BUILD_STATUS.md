@@ -89,3 +89,29 @@ tests/test_api.py ......                                                 [6/6 PA
 ```
 
 All acceptance checklist criteria from Section 20 are satisfied and verified.
+
+---
+
+## 5. VS Code Execution & Desktop Shell Diagnostics
+
+### A. One-Click VS Code Integration (`F5`)
+- Added `.vscode/launch.json` and `.vscode/tasks.json` with three predefined debug targets:
+  1. **Launch Trustwire Desktop App (F5)**: Runs universal desktop launcher (`npm start`).
+  2. **Run Python Backend Only (FastAPI)**: Runs local uvicorn development server on port 8765 with auto-reload.
+  3. **Run All Automated Tests (Pytest)**: Executes the 22-test automated regression suite.
+
+### B. Resolved Desktop Launch Issues
+1. **Asset Loading in Electron (`file://` Protocol)**:
+   - *Problem*: Vite's default build config generates root-relative `/assets/...` URLs which resolve to `file:///assets/...` on Windows, causing asset 404s and a blank screen.
+   - *Resolution*: Configured `base: './'` in `frontend/vite.config.ts` and rebuilt distribution.
+2. **Cold Start Latency Perception**:
+   - *Problem*: Cold model loading (ViT + Wav2Vec2 + Whisper) requires ~8 seconds on initial launch.
+   - *Resolution*: Added an immediate responsive CSS-animated splash screen in `desktop/main.js` that displays loading progress while polling `/api/health`, transitioning smoothly to the live dashboard as soon as the core is ready.
+3. **Windows GUI Process Stdio Crash (`0xC000013A`)**:
+   - *Problem*: In Windows GUI applications, `stdio: 'inherit'` inherits NULL standard handles, causing Python to terminate immediately when writing logs.
+   - *Resolution*: Configured piped stdio (`['ignore', 'pipe', 'pipe']`) with real-time log forwarding to terminal stdout and targeted Python 3.11 executable path resolution.
+
+### C. Live Desktop State
+- App process actively running with WebSocket event stream open on `ws://127.0.0.1:8765/api/ws`.
+- All dashboard views operational: Live Monitoring, Media Analysis, Alert History, Models & Speed, Privacy Retention, and Licenses.
+

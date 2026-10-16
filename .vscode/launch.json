@@ -1,0 +1,26 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Launch Trustwire Desktop App (F5)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm start",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Run Python Backend Only (FastAPI)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "python -m uvicorn backend.app:app --host 127.0.0.1 --port 8765 --reload",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Run All Automated Tests (Pytest)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "python -m pytest -v",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
