@@ -1,0 +1,39 @@
+# Trustwire Python Backend Dependencies
+# Verified on Windows 11 Build 26200 / Python 3.11.9
+
+# Web API & Server
+fastapi==0.115.12
+uvicorn==0.34.0
+pydantic==2.14.1
+pydantic_core==2.50.1
+starlette==0.46.2
+python-multipart==0.0.20
+websockets==17.2
+httpx==0.28.1
+
+# Inference & Deep Learning Engines
+onnxruntime==1.31.0
+torch==2.14.1+cpu
+torchaudio==2.11.0+cpu
+transformers==5.20.0
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+tokenizers==0.23.3
+safetensors==0.8.0
+huggingface-hub==2.2.0
+
+# Computer Vision & Media Processing
+opencv-python-headless==4.14.0.94
+numpy==2.3.3
+av==18.1.0
+
+# Windows Screen & Audio Capture
+mss==10.2.0
+soundcard==0.4.6
+cffi==2.1.1
+pycparser==3.11
+
+# Testing & Quality Assurance
+pytest==8.4.2
+iniconfig==2.3.1
+pluggy==1.7.0
