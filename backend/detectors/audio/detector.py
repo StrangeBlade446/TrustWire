@@ -101,15 +101,20 @@ class AudioDeepfakeDetector:
         if not self.is_available:
             return 0.0
 
+        # Silence / near-silence threshold (RMS energy < 0.003)
+        rms = float(np.sqrt(np.mean(samples_16k ** 2))) if len(samples_16k) > 0 else 0.0
+        if rms < 0.003:
+            return 0.0
+
         tensor_samples = torch.from_numpy(samples_16k).float()
         inputs = self.feature_extractor(tensor_samples, sampling_rate=16000, return_tensors="pt")
 
         with torch.no_grad():
             outputs = self.model(**inputs)
             logits = outputs.logits
-            # Softmax: id2label: {0: 'fake', 1: 'real'}
+            # In the Wav2Vec2 spoofing checkpoint, positive spoof/synthetic speech corresponds to index 1
             probs = torch.softmax(logits, dim=-1)[0]
-            fake_prob = float(probs[0])
+            fake_prob = float(probs[1])
 
         return fake_prob
 
@@ -223,25 +228,28 @@ class AudioDeepfakeDetector:
         sorted_scores = sorted(scores, reverse=True)
         top_k = max(1, int(np.ceil(total_chunks * 0.20)))
         aggregate_score = float(np.mean(sorted_scores[:top_k]))
+        mean_all_score = float(np.mean(scores))
+        suspicious_chunk_count = len([s for s in scores if s >= 0.65])
+        suspicious_ratio = suspicious_chunk_count / float(total_chunks)
 
-        if aggregate_score >= 0.65:
+        if (aggregate_score >= 0.65 and suspicious_ratio >= 0.30) or (total_chunks == 1 and aggregate_score >= 0.65):
             classification = "Potentially synthetic"
             summary = (
                 f"Potentially synthetic: {len(suspicious_ranges)} suspicious acoustic segments detected "
-                f"(peak fake score: {sorted_scores[0]:.2f}, mean top-tier score: {aggregate_score:.2f}). "
-                f"Acoustic features match synthetic speech generation models."
+                f"({suspicious_chunk_count}/{total_chunks} segments, peak fake score: {sorted_scores[0]:.2f}, "
+                f"aggregate score: {aggregate_score:.2f}). Acoustic features match synthetic speech generation models."
             )
-        elif aggregate_score < 0.35:
+        elif aggregate_score < 0.40 and suspicious_ratio < 0.20:
             classification = "Likely authentic"
             summary = (
                 f"Likely authentic: No significant synthetic voice or neural vocoder patterns detected "
-                f"across {total_chunks} analyzed segments (peak score: {sorted_scores[0]:.2f})."
+                f"across {total_chunks} analyzed segments (mean score: {mean_all_score:.2f}, peak: {sorted_scores[0]:.2f})."
             )
         else:
             classification = "Inconclusive"
             summary = (
-                f"Inconclusive: Acoustic score fell in borderline range ({aggregate_score:.2f}). "
-                f"Background noise, microphone clipping, or reverberation may have affected inference."
+                f"Inconclusive: Acoustic score fell in borderline range (aggregate: {aggregate_score:.2f}, "
+                f"suspicious ratio: {suspicious_ratio:.1%}). Background noise, microphone clipping, or reverberation may have affected inference."
             )
 
         return AudioAnalysisResult(

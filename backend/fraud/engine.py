@@ -147,23 +147,24 @@ class FraudRulesEngine:
             has_payment = FraudCategory.PAYMENT_DIVERSION in matched_categories
             has_impersonation = FraudCategory.IMPERSONATION in matched_categories
             has_refund = FraudCategory.REFUND_KYC_TRAP in matched_categories
+            has_extortion = FraudCategory.INVESTMENT_EXTORTION in matched_categories
 
-            # Critical: Remote access + credentials, or urgency + credentials + payment, or remote access + banking
-            if (has_remote and (has_credentials or has_payment)) or (has_credentials and has_urgency and (has_payment or has_impersonation)):
+            # Critical: Blackmail/extortion, remote access + credentials, multi-vector urgency + payment + authority
+            if (has_extortion and (has_payment or has_urgency)) or (has_remote and (has_credentials or has_payment)) or (has_credentials and has_urgency and (has_payment or has_impersonation)) or (has_impersonation and has_payment and has_urgency):
                 severity = FraudSeverity.CRITICAL
                 score = max(score, 0.90)
                 is_suspicious = True
-                explanation = "CRITICAL ALERT: Multi-vector attack combining coercive authority, credential theft, or remote software control."
-            # High: Direct credential request + urgency, or remote access installation command, or payment to safe account
-            elif has_credentials or has_remote or (has_payment and has_urgency) or (has_impersonation and has_payment):
+                explanation = f"CRITICAL ALERT: High-severity deception attack involving {', '.join(cat_names)}."
+            # High: Direct extortion, credential theft, remote access, payment demand + urgency, impersonation + payment
+            elif has_extortion or has_credentials or has_remote or (has_payment and (has_urgency or has_impersonation)) or (has_impersonation and has_urgency):
                 severity = FraudSeverity.HIGH
                 score = max(score, 0.70)
                 is_suspicious = True
                 explanation = f"HIGH RISK: Suspicious instructions detected involving {', '.join(cat_names)}."
-            # Caution: Urgency alone, or payment mention, or refund/KYC lure
-            elif has_urgency or has_refund or has_payment or has_impersonation:
+            # Caution: Payment mention, urgency alone, refund/KYC trap, authority impersonation
+            elif has_payment or has_urgency or has_refund or has_impersonation:
                 severity = FraudSeverity.CAUTION
-                score = max(score, 0.40)
+                score = max(score, 0.50)
                 is_suspicious = True
                 explanation = f"CAUTION: Potential social-engineering language detected ({', '.join(cat_names)})."
             else:

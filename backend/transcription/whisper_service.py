@@ -126,10 +126,12 @@ class WhisperTranscriptionService:
             )
 
         try:
+            # For offline media analysis, vad_filter=False ensures background music/effects
+            # in AI generated videos do not cause Silero VAD to drop spoken dialogue.
             segments_gen, info = self.model.transcribe(
                 str(audio_path),
                 beam_size=1,
-                vad_filter=True
+                vad_filter=False
             )
             segments = []
             texts = []

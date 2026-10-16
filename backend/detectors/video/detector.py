@@ -68,12 +68,17 @@ class VideoDeepfakeDetector:
             )
             self.input_name = self.session.get_inputs()[0].name
 
-            # Initialize OpenCV Face Detector (Haar cascade fallback is fast and robust on Windows)
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            if os.path.exists(cascade_path):
-                self.face_cascade = cv2.CascadeClassifier(cascade_path)
+            # Initialize OpenCV Face Detectors (alt2 is highly accurate, profileface detects angled faces)
+            cascade_alt2 = cv2.data.haarcascades + 'haarcascade_frontalface_alt2.xml'
+            cascade_profile = cv2.data.haarcascades + 'haarcascade_profileface.xml'
+            cascade_default = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
             
-            logger.info("Video deepfake detector initialized successfully.")
+            self.face_cascades = []
+            for p in [cascade_alt2, cascade_profile, cascade_default]:
+                if os.path.exists(p):
+                    self.face_cascades.append(cv2.CascadeClassifier(p))
+            
+            logger.info(f"Video deepfake detector initialized with {len(self.face_cascades)} face cascades.")
         except Exception as e:
             self._load_error = str(e)
             logger.error(f"Failed to initialize video detector: {e}")
@@ -93,16 +98,14 @@ class VideoDeepfakeDetector:
         # Add batch dim: NCHW
         return np.expand_dims(transposed, axis=0).astype(np.float32)
 
-    def extract_face(self, frame: np.ndarray) -> Tuple[np.ndarray, bool, Optional[List[int]]]:
-        """Detect and crop the primary face in the frame, or return centered crop if none detected."""
-        if self.face_cascade is not None:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = self.face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60))
+    def extract_face(self, frame: np.ndarray) -> Tuple[Optional[np.ndarray], bool, Optional[List[int]]]:
+        """Detect and crop the primary face in the frame using multi-cascade detection."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        for cascade in getattr(self, 'face_cascades', []):
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(60, 60))
             if len(faces) > 0:
-                # Select the largest face by area
                 largest_face = max(faces, key=lambda f: f[2] * f[3])
                 x, y, w, h = largest_face
-                # Add 15% margin around the face
                 margin_x = int(w * 0.15)
                 margin_y = int(h * 0.15)
                 x1 = max(0, x - margin_x)
@@ -112,19 +115,24 @@ class VideoDeepfakeDetector:
                 cropped = frame[y1:y2, x1:x2]
                 return cropped, True, [int(x), int(y), int(w), int(h)]
 
-        # Center crop fallback
-        h, w = frame.shape[:2]
-        min_dim = min(h, w)
-        start_y = (h - min_dim) // 2
-        start_x = (w - min_dim) // 2
-        return frame[start_y:start_y+min_dim, start_x:start_x+min_dim], False, None
+        # If no face is detected, return None rather than center-cropping background
+        return None, False, None
 
     def analyze_frame(self, frame: np.ndarray, timestamp_seconds: float = 0.0) -> FrameEvidence:
-        """Analyze a single video frame."""
+        """Analyze a single video frame. Only runs ViT if a human face is verified."""
         if not self.is_available:
             return FrameEvidence(timestamp_seconds=timestamp_seconds, fake_score=0.0, face_detected=False)
 
         face_img, has_face, bbox = self.extract_face(frame)
+        if not has_face or face_img is None or face_img.size == 0:
+            # Non-face frame: do not score out-of-distribution background with face classifier
+            return FrameEvidence(
+                timestamp_seconds=round(timestamp_seconds, 2),
+                fake_score=0.0,
+                face_detected=False,
+                bounding_box=None
+            )
+
         tensor = self.preprocess_image(face_img)
         outputs = self.session.run(None, {self.input_name: tensor})
         logits = outputs[0]  # shape: (1, 2)
@@ -136,7 +144,7 @@ class VideoDeepfakeDetector:
         return FrameEvidence(
             timestamp_seconds=round(timestamp_seconds, 2),
             fake_score=round(fake_prob, 4),
-            face_detected=has_face,
+            face_detected=True,
             bounding_box=bbox
         )
 
@@ -217,41 +225,64 @@ class VideoDeepfakeDetector:
                 processing_duration_ms=duration_ms
             )
 
-        # Forensic Aggregation
-        fake_scores = [ev.fake_score for ev in frame_evidences]
-        suspicious_evidences = [ev for ev in frame_evidences if ev.fake_score >= 0.65]
+        # Forensic Face-Only Aggregation
+        face_evidences = [ev for ev in frame_evidences if ev.face_detected]
+        total_face_frames = len(face_evidences)
+
+        if total_face_frames == 0:
+            return VideoAnalysisResult(
+                status="Completed",
+                classification="Inconclusive",
+                confidence_score=0.0,
+                frames_analyzed=total_frames,
+                suspicious_frames_count=0,
+                suspicious_timestamps=[],
+                frame_evidences=frame_evidences,
+                evidence_summary=f"Inconclusive: No clear human faces detected across {total_frames} sampled frames. Facial deepfake analysis requires visible facial features.",
+                processing_duration_ms=duration_ms
+            )
+
+        fake_scores = [ev.fake_score for ev in face_evidences]
+        suspicious_evidences = [ev for ev in face_evidences if ev.fake_score >= 0.65]
         suspicious_count = len(suspicious_evidences)
         suspicious_timestamps = [ev.timestamp_seconds for ev in suspicious_evidences]
+        suspicious_ratio = suspicious_count / float(total_face_frames)
 
-        # Top 10% high-confidence percentile aggregation
         sorted_scores = sorted(fake_scores, reverse=True)
-        top_k = max(1, int(np.ceil(total_frames * 0.15)))
-        aggregate_score = float(np.mean(sorted_scores[:top_k]))
+        top_k = max(1, int(np.ceil(total_face_frames * 0.25)))
+        top_k_score = float(np.mean(sorted_scores[:top_k]))
+        mean_face_score = float(np.mean(fake_scores))
+        median_face_score = float(np.median(fake_scores))
 
-        # Classification decision boundaries
-        if aggregate_score >= 0.65:
+        # A video is classified as manipulated only if a consistent portion of detected face frames show manipulation
+        # (at least 35% of face frames suspicious AND top-k score >= 0.65), preventing 1-2 momentary blurs from alerting.
+        if (suspicious_ratio >= 0.35 and top_k_score >= 0.65) or (total_face_frames <= 3 and mean_face_score >= 0.70):
             classification = "Potentially manipulated"
+            confidence = round(top_k_score, 4)
             summary = (
-                f"Potentially manipulated: {suspicious_count} of {total_frames} sampled frames showed "
-                f"anomalous facial generation artifacts (mean top-tier fake score: {aggregate_score:.2f})."
+                f"Potentially manipulated: {suspicious_count} of {total_face_frames} face-detected frames "
+                f"({suspicious_ratio:.1%}) showed anomalous facial generation artifacts (mean top-tier fake score: {confidence:.2f})."
             )
-        elif aggregate_score < 0.35:
+        elif suspicious_ratio <= 0.15 and median_face_score < 0.40 and mean_face_score < 0.45:
             classification = "Likely authentic"
+            confidence = round(1.0 - mean_face_score, 4)
             summary = (
-                f"Likely authentic: No significant facial manipulation artifacts detected across "
-                f"{total_frames} sampled frames (peak score: {sorted_scores[0]:.2f})."
+                f"Likely authentic: No persistent facial manipulation artifacts detected across "
+                f"{total_face_frames} face frames (mean fake score: {mean_face_score:.2f}, peak: {sorted_scores[0]:.2f})."
             )
         else:
             classification = "Inconclusive"
+            confidence = round(mean_face_score, 4)
             summary = (
-                f"Inconclusive: Sampled frames showed boundary scores (aggregate: {aggregate_score:.2f}). "
-                f"Visual artifacts could not be definitively separated from natural compression."
+                f"Inconclusive: Sampled face frames showed borderline or inconsistent artifacts "
+                f"({suspicious_count}/{total_face_frames} suspicious frames, mean score: {mean_face_score:.2f}). "
+                f"Natural lighting variations or camera compression could not be ruled out."
             )
 
         return VideoAnalysisResult(
             status="Completed",
             classification=classification,
-            confidence_score=round(aggregate_score, 4),
+            confidence_score=confidence,
             frames_analyzed=total_frames,
             suspicious_frames_count=suspicious_count,
             suspicious_timestamps=suspicious_timestamps,
