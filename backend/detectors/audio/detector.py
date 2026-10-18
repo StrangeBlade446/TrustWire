@@ -51,7 +51,24 @@ class AudioDeepfakeDetector:
         self._initialize_model()
 
     def _initialize_model(self):
-        """Load Wav2Vec2 model (INT8 ONNX preferred, PyTorch fallback)."""
+        """Load Wav2Vec2 model (PyTorch safetensors preferred for full fidelity, ONNX fallback)."""
+        try:
+            safetensors_path = self.model_dir / "model.safetensors"
+            if safetensors_path.exists():
+                self.feature_extractor = AutoFeatureExtractor.from_pretrained(str(self.model_dir))
+                self.model = AutoModelForAudioClassification.from_pretrained(str(self.model_dir))
+                self.model.eval()
+                self.model_name = "Wav2Vec2 Audio Deepfake Classifier (PyTorch)"
+                logger.info("Audio deepfake detector initialized successfully using PyTorch.")
+                return
+            else:
+                self._load_error = f"Model checkpoint not found at {safetensors_path}"
+                logger.warning(self._load_error)
+        except Exception as e:
+            self._load_error = str(e)
+            logger.warning(f"Failed to initialize PyTorch audio detector: {e}")
+
+        # Fallback to ONNX if available
         onnx_path = self.model_dir / "wav2vec2_large_xlsr_int8.onnx"
         if onnx_path.exists():
             try:
@@ -62,26 +79,10 @@ class AudioDeepfakeDetector:
                 sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
                 self.session = ort.InferenceSession(str(onnx_path), sess_options=sess_options, providers=["CPUExecutionProvider"])
                 self.model_name = "Wav2Vec2 Large XLSR Audio Spoofing Classifier (INT8 ONNX)"
-                logger.info("Audio deepfake detector initialized successfully using Wav2Vec2 INT8 ONNX.")
+                logger.info("Audio deepfake detector initialized successfully using Wav2Vec2 INT8 ONNX fallback.")
                 return
             except Exception as e:
-                logger.warning(f"Failed to initialize ONNX audio session: {e}, falling back to PyTorch.")
-
-        try:
-            safetensors_path = self.model_dir / "model.safetensors"
-            if not safetensors_path.exists():
-                self._load_error = f"Model checkpoint not found at {safetensors_path}"
-                logger.warning(self._load_error)
-                return
-
-            self.feature_extractor = AutoFeatureExtractor.from_pretrained(str(self.model_dir))
-            self.model = AutoModelForAudioClassification.from_pretrained(str(self.model_dir))
-            self.model.eval()
-            self.model_name = "Wav2Vec2 Sequence Audio Spoofing Classifier"
-            logger.info("Audio deepfake detector initialized successfully using PyTorch.")
-        except Exception as e:
-            self._load_error = str(e)
-            logger.error(f"Failed to initialize audio detector: {e}")
+                logger.error(f"Failed to initialize ONNX audio session fallback: {e}")
 
     @property
     def is_available(self) -> bool:
@@ -149,14 +150,8 @@ class AudioDeepfakeDetector:
             outputs = self.model(**inputs)
             logits = outputs.logits
             probs = torch.softmax(logits, dim=-1)[0]
-            # Identify fake index dynamically from label2id or default to 0 (fake in checkpoint)
-            fake_idx = 0
-            if hasattr(self.model, "config") and hasattr(self.model.config, "label2id"):
-                for name, idx in self.model.config.label2id.items():
-                    if any(k in name.lower() for k in ["fake", "synthetic", "spoof"]):
-                        fake_idx = int(idx)
-                        break
-            fake_prob = float(probs[fake_idx])
+            # Class 0: Real human speech, Class 1: Synthetic speech / vocoder spoof
+            fake_prob = float(probs[1])
 
         return fake_prob
 
@@ -219,7 +214,7 @@ class AudioDeepfakeDetector:
             rms_val = float(np.sqrt(np.mean(samples ** 2))) if len(samples) > 0 else 0.0
             chunk_rms_list.append(rms_val)
             score = self.analyze_samples(samples)
-            is_susp = score >= 0.70
+            is_susp = score >= 0.65
             chunk_evidences.append(AudioChunkEvidence(
                 start_seconds=0.0,
                 end_seconds=round(total_duration, 2),
@@ -242,7 +237,7 @@ class AudioDeepfakeDetector:
                 chunk_rms_list.append(rms_val)
 
                 score = self.analyze_samples(chunk_data)
-                is_susp = score >= 0.70
+                is_susp = score >= 0.65
 
                 chunk_evidences.append(AudioChunkEvidence(
                     start_seconds=start_time,
@@ -294,39 +289,56 @@ class AudioDeepfakeDetector:
                 processing_duration_ms=duration_ms
             )
 
-        # Case 2: Speech segments present - evaluate only active speech segments
-        sorted_speech = sorted(speech_scores, reverse=True)
-        top_k = max(1, int(np.ceil(len(speech_scores) * 0.25)))
-        aggregate_score = float(np.mean(sorted_speech[:top_k]))
-        mean_speech_score = float(np.mean(speech_scores))
-        suspicious_chunk_count = len([s for s in speech_scores if s >= 0.70])
-        suspicious_ratio = suspicious_chunk_count / float(len(speech_scores))
+        # Case 2: Speech segments present - evaluate speech segment distribution
+        susp_chunks = [s for s in speech_scores if s >= 0.65]
+        auth_chunks = [s for s in speech_scores if s <= 0.20]
+        susp_ratio = len(susp_chunks) / float(len(speech_scores))
+        auth_ratio = len(auth_chunks) / float(len(speech_scores))
+        median_score = float(np.median(speech_scores))
+        peak_score = float(max(speech_scores))
+        mean_score = float(np.mean(speech_scores))
 
-        # Require aggregate synthetic vocoder anomalies across active speech
-        if (aggregate_score >= 0.70 and suspicious_chunk_count >= 2) or (len(speech_scores) == 1 and aggregate_score >= 0.70):
+        is_synthetic = False
+        if len(speech_scores) <= 3:
+            # Short recordings (<= 3 chunks): require peak >= 0.80 and low natural speech ratio
+            if auth_ratio < 0.60 and (peak_score >= 0.80 or susp_ratio >= 0.50):
+                is_synthetic = True
+        else:
+            # Longer recordings (> 3 chunks): dominant synthetic vocoder anomalies and low natural voice
+            if susp_ratio >= 0.40 and auth_ratio < 0.35:
+                is_synthetic = True
+            elif median_score >= 0.65 and auth_ratio < 0.25:
+                is_synthetic = True
+
+        if is_synthetic:
             classification = "Potentially synthetic"
+            conf = round(float(np.mean(susp_chunks)) if susp_chunks else peak_score, 4)
             summary = (
                 f"Potentially synthetic: {len(suspicious_ranges)} suspicious acoustic segments detected "
-                f"({suspicious_chunk_count}/{len(speech_scores)} active speech segments, peak fake score: {sorted_speech[0]:.2f}, "
-                f"aggregate score: {aggregate_score:.2f}). Acoustic features match synthetic speech generation models."
+                f"({len(susp_chunks)}/{len(speech_scores)} speech chunks match neural vocoder artifacts, "
+                f"peak fake score: {peak_score:.2f}, median: {median_score:.2f}). "
+                f"Acoustic features match synthetic speech generation models."
             )
-        elif aggregate_score < 0.35 and suspicious_chunk_count == 0:
+        elif auth_ratio >= 0.35 or median_score <= 0.20 or len(susp_chunks) == 0:
             classification = "Likely authentic"
+            conf = round(float(np.mean(auth_chunks)) if auth_chunks else median_score, 4)
             summary = (
-                f"Likely authentic: No significant synthetic voice or neural vocoder patterns detected "
-                f"across {len(speech_scores)} speech segments (mean score: {mean_speech_score:.2f}, peak: {sorted_speech[0]:.2f})."
+                f"Likely authentic: Natural human vocal characteristics verified across "
+                f"{len(auth_chunks)}/{len(speech_scores)} speech segments (mean natural score: {conf:.2f}, median: {median_score:.2f})."
             )
         else:
             classification = "Inconclusive"
+            conf = round(mean_score, 4)
             summary = (
-                f"Inconclusive: Acoustic score fell in borderline range (aggregate: {aggregate_score:.2f}, "
-                f"suspicious ratio: {suspicious_ratio:.1%}). Background noise, microphone clipping, or reverberation may have affected inference."
+                f"Inconclusive: Acoustic score fell in borderline range (mean: {mean_score:.2f}, "
+                f"suspicious ratio: {susp_ratio:.1%}, natural ratio: {auth_ratio:.1%}). "
+                f"Background reverberation or mixed signals may have affected inference."
             )
 
         return AudioAnalysisResult(
             status="Completed",
             classification=classification,
-            confidence_score=round(aggregate_score, 4),
+            confidence_score=conf,
             audio_duration_seconds=round(total_duration, 2),
             chunks_analyzed=total_chunks,
             suspicious_time_ranges=suspicious_ranges,
