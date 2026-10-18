@@ -10,8 +10,6 @@ import {
   ShieldCheck,
   Activity,
   Layers,
-  ChevronDown,
-  ChevronUp,
   XCircle
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -27,7 +25,6 @@ export const AnalyzeMedia: React.FC = () => {
   // Analysis options
   const [analyzeVideo, setAnalyzeVideo] = useState(true);
   const [analyzeAudio, setAnalyzeAudio] = useState(true);
-  const [analyzeFraud, setAnalyzeFraud] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -67,11 +64,10 @@ export const AnalyzeMedia: React.FC = () => {
     setProgressText('Uploading and preparing media streams...');
 
     try {
-      setProgressText('Running forensic neural network analysis (Video, Audio & Fraud)...');
+      setProgressText('Running forensic neural network analysis (Video & Audio)...');
       const res = await api.uploadAndAnalyzeMedia(file, {
         analyze_video_track: analyzeVideo,
         analyze_audio_track: analyzeAudio,
-        analyze_fraud_track: analyzeFraud
       });
       setResult(res);
     } catch (err: any) {
@@ -88,7 +84,7 @@ export const AnalyzeMedia: React.FC = () => {
       <div className="pb-6 border-b border-border">
         <h1 className="text-2xl font-bold text-white tracking-tight">Offline Media Forensic Analysis</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Perform high-precision forensic inspection on recorded audio and video files. Evaluates facial anomalies, synthetic speech acoustic markers, and transcript fraud risks.
+          Perform high-precision forensic inspection on recorded audio and video files. Evaluates facial anomalies and synthetic speech acoustic markers.
         </p>
       </div>
 
@@ -173,19 +169,6 @@ export const AnalyzeMedia: React.FC = () => {
                 <span className="text-gray-400">Evaluates speech track for synthetic voice or cloning anomalies.</span>
               </div>
             </label>
-
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={analyzeFraud}
-                onChange={(e) => setAnalyzeFraud(e.target.checked)}
-                className="w-4 h-4 rounded text-teal-500 focus:ring-teal-400 border-border bg-surface mt-0.5"
-              />
-              <div>
-                <span className="font-semibold text-white block">Speech Transcription & Fraud Rules</span>
-                <span className="text-gray-400">Transcribes dialogue and evaluates credential theft, urgency, and extortion.</span>
-              </div>
-            </label>
           </div>
 
           <button
@@ -203,7 +186,7 @@ export const AnalyzeMedia: React.FC = () => {
                 Analyzing Media...
               </span>
             ) : (
-              'Run Multi-Vector Inspection'
+              'Run Forensic Inspection'
             )}
           </button>
 
@@ -228,7 +211,7 @@ export const AnalyzeMedia: React.FC = () => {
                 Duration: {(result.processing_time_ms / 1000).toFixed(2)}s
               </span>
               <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                result.overall_verdict.includes('Suspicious') || result.overall_verdict.includes('Risk')
+                result.overall_verdict.includes('Suspicious')
                   ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
                   : 'bg-teal-500/10 text-teal-300 border border-teal-500/20'
               }`}>
@@ -237,7 +220,7 @@ export const AnalyzeMedia: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Video Track Result Card */}
             {result.video_analysis && (
               <div className="p-6 rounded-2xl border border-border bg-panel space-y-4">
@@ -329,59 +312,7 @@ export const AnalyzeMedia: React.FC = () => {
                 )}
               </div>
             )}
-
-            {/* Fraud & Social Engineering Result Card */}
-            {result.fraud_assessment && (
-              <div className="p-6 rounded-2xl border border-border bg-panel space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ShieldAlert className="w-5 h-5 text-amber-400" />
-                    <span className="font-semibold text-sm text-white">Fraud & Coercion</span>
-                  </div>
-                  <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
-                    result.fraud_assessment.is_suspicious
-                      ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                      : 'bg-teal-500/10 text-teal-300 border border-teal-500/20'
-                  }`}>
-                    {result.fraud_assessment.severity}
-                  </span>
-                </div>
-
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between text-gray-400">
-                    <span>Risk Index:</span>
-                    <span className="font-mono text-white">{(result.fraud_assessment.risk_score * 100).toFixed(0)}%</span>
-                  </div>
-                  <div className="flex justify-between text-gray-400">
-                    <span>Categories:</span>
-                    <span className="text-gray-300 truncate">{result.fraud_assessment.detected_categories.join(', ') || 'None'}</span>
-                  </div>
-                  <div className="flex justify-between text-gray-400">
-                    <span>Trigger Words:</span>
-                    <span className="text-gray-300 truncate">{result.fraud_assessment.triggering_phrases.join(', ') || 'None'}</span>
-                  </div>
-                </div>
-
-                <p className="text-xs text-gray-300 pt-2 border-t border-border/40">
-                  {result.fraud_assessment.explanation}
-                </p>
-
-                <div className="p-2.5 rounded bg-surface border border-border text-xs text-amber-300">
-                  {result.fraud_assessment.protective_action}
-                </div>
-              </div>
-            )}
           </div>
-
-          {/* Transcript Excerpt Viewer */}
-          {result.transcription && result.transcription.full_text && (
-            <div className="p-6 rounded-2xl border border-border bg-panel space-y-3">
-              <h3 className="text-sm font-semibold text-white">Decoded Speech Transcript</h3>
-              <div className="p-4 rounded-xl bg-surface border border-border text-xs text-gray-300 leading-relaxed max-h-48 overflow-y-auto">
-                {result.transcription.full_text}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>

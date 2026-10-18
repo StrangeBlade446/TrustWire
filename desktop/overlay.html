@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trustwire Live Overlay</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding: 4px;
+      gap: 6px;
+    }
+
+    .overlay-bar {
+      width: 100%;
+      height: 48px;
+      background: rgba(11, 13, 16, 0.94);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 24px;
+      box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(20, 184, 166, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px 0 16px;
+      -webkit-app-region: drag;
+      cursor: grab;
+      transition: all 0.25s ease;
+      flex-shrink: 0;
+    }
+
+    .overlay-bar:active {
+      cursor: grabbing;
+    }
+
+    .left-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .brand svg {
+      width: 18px;
+      height: 18px;
+      color: #2DD4BF;
+    }
+
+    .brand-name {
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+      color: #FFFFFF;
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 9px;
+      border-radius: 12px;
+      background: rgba(20, 184, 166, 0.12);
+      border: 1px solid rgba(20, 184, 166, 0.25);
+      font-size: 11px;
+      font-weight: 700;
+      color: #2DD4BF;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .status-badge.paused {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.3);
+      color: #FBBF24;
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #2DD4BF;
+      box-shadow: 0 0 8px #2DD4BF;
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+
+    .status-badge.paused .pulse-dot {
+      background: #FBBF24;
+      box-shadow: 0 0 8px #FBBF24;
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    .stats-ticker {
+      font-size: 11px;
+      color: #94A3B8;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      display: none;
+    }
+
+    @media (min-width: 460px) {
+      .stats-ticker {
+        display: block;
+      }
+    }
+
+    .actions-section {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      -webkit-app-region: no-drag;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 12px;
+      border-radius: 15px;
+      font-size: 12px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      outline: none;
+    }
+
+    .btn:active {
+      transform: scale(0.96);
+    }
+
+    .btn-pause {
+      background: rgba(255, 255, 255, 0.08);
+      color: #E2E8F0;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .btn-pause:hover {
+      background: rgba(245, 158, 11, 0.18);
+      color: #FCD34D;
+      border-color: rgba(245, 158, 11, 0.4);
+    }
+
+    .btn-play {
+      background: rgba(20, 184, 166, 0.18);
+      color: #2DD4BF;
+      border: 1px solid rgba(20, 184, 166, 0.4);
+    }
+
+    .btn-play:hover {
+      background: rgba(20, 184, 166, 0.28);
+      color: #5EEAD4;
+      border-color: rgba(20, 184, 166, 0.6);
+    }
+
+    .btn-stop {
+      background: #E11D48;
+      color: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(225, 29, 72, 0.35);
+    }
+
+    .btn-stop:hover {
+      background: #F43F5E;
+      box-shadow: 0 2px 12px rgba(225, 29, 72, 0.55);
+    }
+
+    .btn-icon {
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #94A3B8;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #FFFFFF;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn svg {
+      width: 13px;
+      height: 13px;
+      stroke-width: 2.2;
+    }
+
+    /* Disparity Alert Card Popup */
+    .disparity-card {
+      width: 100%;
+      background: rgba(15, 18, 22, 0.98);
+      backdrop-filter: blur(24px);
+      border-radius: 18px;
+      border: 1px solid rgba(225, 29, 72, 0.5);
+      box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.85), 0 0 20px rgba(225, 29, 72, 0.25);
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      -webkit-app-region: no-drag;
+      animation: alertSlide 0.25s ease-out;
+    }
+
+    .disparity-card.video-theme {
+      border-color: rgba(244, 63, 94, 0.6);
+      box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.85), 0 0 20px rgba(244, 63, 94, 0.3);
+    }
+
+    .disparity-card.audio-theme {
+      border-color: rgba(6, 182, 212, 0.6);
+      box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.85), 0 0 20px rgba(6, 182, 212, 0.3);
+    }
+
+    .disparity-card.fraud-theme {
+      border-color: rgba(245, 158, 11, 0.6);
+      box-shadow: 0 16px 36px -4px rgba(0, 0, 0, 0.85), 0 0 20px rgba(245, 158, 11, 0.3);
+    }
+
+    @keyframes alertSlide {
+      from { transform: translateY(-8px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    .alert-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .disparity-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+
+    .disparity-tag.video-tag {
+      background: rgba(244, 63, 94, 0.2);
+      color: #FDA4AF;
+      border: 1px solid rgba(244, 63, 94, 0.4);
+    }
+
+    .disparity-tag.audio-tag {
+      background: rgba(6, 182, 212, 0.2);
+      color: #67E8F9;
+      border: 1px solid rgba(6, 182, 212, 0.4);
+    }
+
+    .disparity-tag.fraud-tag {
+      background: rgba(245, 158, 11, 0.2);
+      color: #FCD34D;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    .alert-conf-badge {
+      font-size: 10px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      color: #94A3B8;
+    }
+
+    .btn-close-alert {
+      background: transparent;
+      border: none;
+      color: #64748B;
+      font-size: 13px;
+      cursor: pointer;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-close-alert:hover {
+      color: #FFFFFF;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .alert-text-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .alert-title-text {
+      font-size: 12px;
+      font-weight: 700;
+      color: #FFFFFF;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 320px;
+    }
+
+    .alert-action-text {
+      font-size: 11px;
+      color: #CBD5E1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 340px;
+    }
+
+    .alert-btns-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding-top: 2px;
+    }
+
+    .btn-xs {
+      height: 24px;
+      padding: 0 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-xs-amber {
+      background: rgba(245, 158, 11, 0.2);
+      color: #FCD34D;
+      border: 1px solid rgba(245, 158, 11, 0.4);
+    }
+
+    .btn-xs-amber:hover {
+      background: rgba(245, 158, 11, 0.3);
+    }
+
+    .btn-xs-teal {
+      background: #14B8A6;
+      color: #000000;
+      font-weight: 700;
+    }
+
+    .btn-xs-teal:hover {
+      background: #2DD4BF;
+    }
+  </style>
+</head>
+<body>
+  <!-- Master Control Bar -->
+  <div class="overlay-bar" id="overlayBar">
+    <div class="left-section">
+      <div class="brand" id="brandBtn" title="Click to show Trustwire" style="-webkit-app-region: no-drag; cursor: pointer;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <span class="brand-name">Trustwire</span>
+      </div>
+
+      <div class="status-badge" id="statusBadge">
+        <span class="pulse-dot"></span>
+        <span id="statusLabel">Monitoring</span>
+      </div>
+
+      <div class="stats-ticker" id="statsTicker">Live Protection</div>
+    </div>
+
+    <div class="actions-section">
+      <!-- Pause / Play Toggle Button -->
+      <button id="btnPausePlay" class="btn btn-pause" title="Pause or Resume Monitoring">
+        <svg id="iconPause" viewBox="0 0 24 24" fill="currentColor">
+          <rect x="6" y="4" width="4" height="16" rx="1"/>
+          <rect x="14" y="4" width="4" height="16" rx="1"/>
+        </svg>
+        <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        <span id="lblPausePlay">Pause</span>
+      </button>
+
+      <!-- Stop Monitoring Button -->
+      <button id="btnStop" class="btn btn-stop" title="Stop Live Monitoring">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <rect x="5" y="5" width="14" height="14" rx="2"/>
+        </svg>
+        <span>Stop</span>
+      </button>
+
+      <!-- Open/Focus Main Window -->
+      <button id="btnFocus" class="btn btn-icon" title="Open Trustwire Dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Disparity Alert Pop-up Notification Card -->
+  <div class="disparity-card" id="disparityCard" style="display: none;">
+    <div class="alert-header">
+      <div class="disparity-tag" id="disparityTag">
+        <span id="disparityIcon">🎥</span>
+        <span id="disparityTypeTitle">VISUAL DISPARITY DETECTED</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <span class="alert-conf-badge" id="alertConfBadge">92% CONF</span>
+        <button class="btn-close-alert" id="btnCloseAlert" title="Dismiss Pop-up">✕</button>
+      </div>
+    </div>
+
+    <div class="alert-text-row">
+      <span class="alert-title-text" id="alertTitleText">Manipulated Video Detected</span>
+    </div>
+
+    <div class="alert-action-text" id="alertActionText">
+      Action: Verify caller identity via trusted secondary channel.
+    </div>
+
+    <div class="alert-btns-row">
+      <button class="btn-xs btn-xs-amber" id="btnAlertPause">⏸ Pause</button>
+      <button class="btn-xs btn-xs-teal" id="btnAlertInspect">Inspect in Trustwire</button>
+    </div>
+  </div>
+
+  <script>
+    let isPaused = false;
+    let isMonitoring = false;
+    let alertTimeout = null;
+
+    const overlayBar = document.getElementById('overlayBar');
+    const btnPausePlay = document.getElementById('btnPausePlay');
+    const btnStop = document.getElementById('btnStop');
+    const btnFocus = document.getElementById('btnFocus');
+    const brandBtn = document.getElementById('brandBtn');
+    const statusBadge = document.getElementById('statusBadge');
+    const statusLabel = document.getElementById('statusLabel');
+    const statsTicker = document.getElementById('statsTicker');
+    const iconPause = document.getElementById('iconPause');
+    const iconPlay = document.getElementById('iconPlay');
+    const lblPausePlay = document.getElementById('lblPausePlay');
+
+    // Disparity card elements
+    const disparityCard = document.getElementById('disparityCard');
+    const disparityTag = document.getElementById('disparityTag');
+    const disparityIcon = document.getElementById('disparityIcon');
+    const disparityTypeTitle = document.getElementById('disparityTypeTitle');
+    const alertConfBadge = document.getElementById('alertConfBadge');
+    const alertTitleText = document.getElementById('alertTitleText');
+    const alertActionText = document.getElementById('alertActionText');
+    const btnCloseAlert = document.getElementById('btnCloseAlert');
+    const btnAlertPause = document.getElementById('btnAlertPause');
+    const btnAlertInspect = document.getElementById('btnAlertInspect');
+
+    function updateUI() {
+      if (!isMonitoring && !isPaused) {
+        overlayBar.style.display = 'none';
+        return;
+      }
+      overlayBar.style.display = 'flex';
+
+      if (isPaused) {
+        statusBadge.classList.add('paused');
+        statusLabel.textContent = 'Paused';
+        btnPausePlay.classList.remove('btn-pause');
+        btnPausePlay.classList.add('btn-play');
+        iconPause.style.display = 'none';
+        iconPlay.style.display = 'inline-block';
+        lblPausePlay.textContent = 'Play';
+        statsTicker.textContent = 'Analysis Suspended';
+      } else {
+        statusBadge.classList.remove('paused');
+        statusLabel.textContent = 'Monitoring';
+        btnPausePlay.classList.remove('btn-play');
+        btnPausePlay.classList.add('btn-pause');
+        iconPause.style.display = 'inline-block';
+        iconPlay.style.display = 'none';
+        lblPausePlay.textContent = 'Pause';
+        statsTicker.textContent = 'Active Screen & Audio';
+      }
+    }
+
+    // Interactive button event listeners
+    btnPausePlay.addEventListener('click', () => {
+      isPaused = !isPaused;
+      updateUI();
+      if (window.overlayApi) {
+        window.overlayApi.sendAction(isPaused ? 'pause' : 'play');
+      }
+    });
+
+    btnStop.addEventListener('click', () => {
+      if (window.overlayApi) {
+        window.overlayApi.sendAction('stop');
+      }
+    });
+
+    btnFocus.addEventListener('click', () => {
+      if (window.overlayApi) {
+        window.overlayApi.sendAction('focus-main');
+      }
+    });
+
+    brandBtn.addEventListener('click', () => {
+      if (window.overlayApi) {
+        window.overlayApi.sendAction('focus-main');
+      }
+    });
+
+    // Disparity Alert Pop-up interactions
+    function dismissAlertCard() {
+      disparityCard.style.display = 'none';
+      if (alertTimeout) {
+        clearTimeout(alertTimeout);
+        alertTimeout = null;
+      }
+      if (window.overlayApi?.dismissAlert) {
+        window.overlayApi.dismissAlert();
+      }
+    }
+
+    btnCloseAlert.addEventListener('click', dismissAlertCard);
+
+    btnAlertPause.addEventListener('click', () => {
+      isPaused = true;
+      updateUI();
+      if (window.overlayApi) {
+        window.overlayApi.sendAction('pause');
+      }
+      dismissAlertCard();
+    });
+
+    btnAlertInspect.addEventListener('click', () => {
+      if (window.overlayApi) {
+        window.overlayApi.sendAction('focus-main');
+      }
+      dismissAlertCard();
+    });
+
+    // Listen for state updates forwarded from main Electron process
+    if (window.overlayApi) {
+      window.overlayApi.onStateUpdate((state) => {
+        if (state) {
+          if (typeof state.is_monitoring === 'boolean') {
+            isMonitoring = state.is_monitoring;
+          }
+          if (typeof state.isPaused === 'boolean') {
+            isPaused = state.isPaused;
+          }
+          if (state.stats) {
+            statsTicker.textContent = state.stats;
+          }
+          updateUI();
+        }
+      });
+
+      // Handle real-time disparity alert pushes
+      window.overlayApi.onDisparityAlert((alert) => {
+        if (!alert) return;
+
+        // Reset theme classes
+        disparityCard.className = 'disparity-card';
+        disparityTag.className = 'disparity-tag';
+
+        if (alert.category === 'video_deepfake') {
+          disparityCard.classList.add('video-theme');
+          disparityTag.classList.add('video-tag');
+          disparityIcon.textContent = '🎥';
+          disparityTypeTitle.textContent = 'Visual Disparity Observed (1 of 2)';
+        } else {
+          disparityCard.classList.add('audio-theme');
+          disparityTag.classList.add('audio-tag');
+          disparityIcon.textContent = '🎙️';
+          disparityTypeTitle.textContent = 'Acoustic Disparity Observed (2 of 2)';
+        }
+
+        alertConfBadge.textContent = `${Math.round((alert.confidence_score || 0) * 100)}% CONF`;
+        alertTitleText.textContent = alert.title || 'Deception Anomaly Detected';
+        alertActionText.textContent = alert.suggested_action ? `Action: ${alert.suggested_action}` : 'Investigate immediately.';
+
+        disparityCard.style.display = 'flex';
+
+        if (alertTimeout) clearTimeout(alertTimeout);
+        // Auto-dismiss after 12 seconds
+        alertTimeout = setTimeout(() => {
+          dismissAlertCard();
+        }, 12000);
+      });
+    }
+
+    updateUI();
+  </script>
+</body>
+</html>

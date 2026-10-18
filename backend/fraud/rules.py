@@ -68,7 +68,11 @@ FRAUD_PATTERNS: Dict[str, PatternDefinition] = {
         category=FraudCategory.PAYMENT_DIVERSION,
         weight=35,
         patterns=[
-            r"\b(?:transfer (?:me )?(?:the |your )?money|send (?:me )?(?:the |your )?money|pay (?:me )?(?:the |your )?money|give (?:me )?(?:the |your )?money)\b",
+            r"\b(?:give|transfer|send|pay|lend|wire|provide|spare)\s+(?:me\s+)?(?:the\s+|your\s+|some\s+|any\s+|a\s+little\s+)?money\b",
+            r"\b(?:need|want|asking for|requesting|begging for)\s+(?:some\s+|the\s+|your\s+|more\s+)?money\b",
+            r"\b(?:give|send|hand over|spare|lend)\s+(?:me\s+)?(?:some\s+|a\s+few\s+|any\s+)?(?:cash|dollars|funds|rupees|bucks)\b",
+            r"\b(?:financial\s+(?:help|assistance|support|aid|relief))\b",
+            r"\b(?:help\s+(?:me\s+)?with\s+(?:some\s+|the\s+)?(?:money|cash|funds|bills))\b",
             r"\b(?:wire (?:me )?(?:the |your )?funds|transfer (?:me )?(?:the |your )?funds|send (?:me )?(?:the |your )?cash)\b",
             r"\b(?:scan (?:this|the) qr code|scan and pay)\b",
             r"\b(?:pay via upi|google pay|phonepe|paytm)\b",
@@ -81,7 +85,7 @@ FRAUD_PATTERNS: Dict[str, PatternDefinition] = {
             r"\b(?:release (?:the )?(?:funds|parcel|consignment|money))\b",
             r"\b(?:make (?:the )?payment|send (?:the )?payment)\b"
         ],
-        description="Directives to transfer funds, pay penalties, scan QR codes, or send money."
+        description="Directives or solicitations to transfer funds, pay penalties, send money, or provide financial assistance."
     ),
     "remote_access": PatternDefinition(
         category=FraudCategory.REMOTE_ACCESS,

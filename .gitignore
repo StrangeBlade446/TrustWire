@@ -51,9 +51,13 @@ desktop/dist/
 temp_media/
 alerts_store/*.json
 !alerts_store/.gitkeep
-models/video/onnx/*.onnx
-models/audio/*.safetensors
+models/**/*.onnx
+models/**/*.safetensors
+models/**/*.bin
+models/**/.cache/
+*.incomplete
 .cache/
+
 
 # Environment and secrets
 .env

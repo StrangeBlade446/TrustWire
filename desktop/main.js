@@ -1,16 +1,18 @@
 /**
  * Trustwire Electron Main Process
  * Spawns the local Python FastAPI backend, monitors health, creates the native window,
- * displays an immediate responsive splash screen, and handles clean application exit.
+ * displays an immediate responsive splash screen, and manages the native Windows floating overlay
+ * for real-time monitoring controls (play, pause, stop).
  */
 
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, screen, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const http = require('http');
 
 let mainWindow = null;
+let overlayWindow = null;
 let pythonProcess = null;
 
 const BACKEND_PORT = 8765;
@@ -216,6 +218,163 @@ function createWindow() {
   });
 }
 
+let lastMonitoringState = null;
+
+function createOverlayWindow() {
+  if (overlayWindow && !overlayWindow.isDestroyed()) return;
+
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width } = primaryDisplay.workAreaSize;
+  const overlayWidth = 470;
+  const overlayHeight = 56;
+  const x = Math.round((width - overlayWidth) / 2);
+  const y = 14;
+
+  overlayWindow = new BrowserWindow({
+    width: overlayWidth,
+    height: overlayHeight,
+    x: x,
+    y: y,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    resizable: false,
+    movable: true,
+    show: false,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'overlay-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  });
+
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlayWindow.loadFile(path.join(__dirname, 'overlay.html'));
+
+  overlayWindow.webContents.on('did-finish-load', () => {
+    if (lastMonitoringState && overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('state-update', lastMonitoringState);
+    }
+  });
+
+  overlayWindow.on('closed', () => {
+    overlayWindow = null;
+  });
+}
+
+// IPC Handlers for Windows Screen Overlay Integration
+ipcMain.on('monitoring-state-changed', (event, state) => {
+  lastMonitoringState = state;
+  if (state && state.is_monitoring) {
+    if (!overlayWindow || overlayWindow.isDestroyed()) {
+      createOverlayWindow();
+    }
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.showInactive();
+      overlayWindow.webContents.send('state-update', state);
+    }
+  } else {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.send('state-update', { is_monitoring: false });
+      overlayWindow.hide();
+    }
+  }
+});
+
+ipcMain.on('overlay-action', (event, action) => {
+  console.log(`[Trustwire Overlay] Received overlay action: ${action}`);
+  if (action === 'focus-main') {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  } else if (action === 'pause' || action === 'play') {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('remote-monitoring-control', action);
+    }
+  } else if (action === 'stop') {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('remote-monitoring-control', 'stop');
+    }
+    // Also perform immediate stop call directly via HTTP to backend
+    const req = http.request({
+      host: BACKEND_HOST,
+      port: BACKEND_PORT,
+      path: '/api/monitoring/stop',
+      method: 'POST',
+      headers: {
+        'X-Trustwire-Token': process.env.TRUSTWIRE_API_TOKEN || 'trustwire_desktop_capability_token'
+      }
+    });
+    req.on('error', () => {});
+    req.end();
+
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.hide();
+    }
+  }
+});
+
+// Disparity Alert Handler for Native Windows Screen Popups
+ipcMain.on('disparity-alert', (event, alert) => {
+  if (!alert) return;
+  // NEVER show desktop screen overlay or notifications for offline media analysis
+  if (alert.source !== 'Live Monitoring') return;
+  console.log(`[Trustwire Alert] Live Disparity observed: ${alert.category} - ${alert.title}`);
+
+  // 1. Show Native Windows OS Toast Notification
+  try {
+    if (Notification && Notification.isSupported()) {
+      const disparityLabel = 
+        alert.category === 'video_deepfake' ? 'Visual Disparity (Face Tampering / Generation)' :
+        'Acoustic Disparity (Synthetic Voice / Clone)';
+
+      new Notification({
+        title: `🚨 ${disparityLabel}`,
+        body: `${alert.title}\nAction: ${alert.suggested_action}`,
+        silent: false
+      }).show();
+    }
+  } catch (e) {
+    console.error('[Trustwire Desktop] Notification toast error:', e);
+  }
+
+  // 2. Expand Native Windows Floating Overlay Window to display Disparity Card (ONLY if monitoring is active)
+  if (lastMonitoringState && lastMonitoringState.is_monitoring && overlayWindow && !overlayWindow.isDestroyed()) {
+    try {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width } = primaryDisplay.workAreaSize;
+      const overlayWidth = 500;
+      const overlayHeight = 175;
+      const x = Math.round((width - overlayWidth) / 2);
+      overlayWindow.setBounds({ x, y: 14, width: overlayWidth, height: overlayHeight });
+      overlayWindow.showInactive();
+      overlayWindow.webContents.send('disparity-alert', alert);
+    } catch (err) {
+      console.error('[Trustwire Desktop] Failed to expand overlay window:', err);
+    }
+  }
+});
+
+ipcMain.on('dismiss-overlay-alert', () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    try {
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width } = primaryDisplay.workAreaSize;
+      const overlayWidth = 470;
+      const overlayHeight = 56;
+      const x = Math.round((width - overlayWidth) / 2);
+      overlayWindow.setBounds({ x, y: 14, width: overlayWidth, height: overlayHeight });
+    } catch (err) {
+      console.error('[Trustwire Desktop] Failed to restore overlay bounds:', err);
+    }
+  }
+});
+
 app.whenReady().then(async () => {
   // 1. Create window immediately with splash animation
   createWindow();
@@ -236,6 +395,9 @@ app.whenReady().then(async () => {
         console.error('[Trustwire Desktop] Failed to load frontend HTML:', err);
       });
     }
+
+    // Prepare overlay window
+    createOverlayWindow();
   } catch (err) {
     console.error('[Trustwire Desktop] Backend initialization timed out:', err);
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -259,6 +421,9 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   stopPythonBackend();
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.close();
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -266,4 +431,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopPythonBackend();
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.close();
+  }
 });

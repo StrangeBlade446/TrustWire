@@ -25,18 +25,15 @@ def test_api_health(client):
     assert "models" in data
     assert data["models"]["video_detector"] == "Ready"
     assert data["models"]["audio_detector"] == "Ready"
-    assert data["models"]["fraud_engine"] == "Ready"
 
 def test_api_models_list(client):
     res = client.get("/api/models")
     assert res.status_code == 200
     models = res.json()
-    assert len(models) == 4
+    assert len(models) == 2
     model_ids = [m["id"] for m in models]
     assert "video_deepfake" in model_ids
     assert "audio_deepfake" in model_ids
-    assert "speech_transcription" in model_ids
-    assert "fraud_rules_engine" in model_ids
 
     for m in models:
         assert "limitations" in m
@@ -60,7 +57,6 @@ def test_monitoring_lifecycle(client):
     start_res = client.post("/api/monitoring/start", json={
         "video_enabled": False,  # disable screen grab in headless CI
         "audio_enabled": False,
-        "fraud_enabled": False
     })
     assert start_res.status_code == 200
     assert start_res.json()["status"] == "started"
@@ -87,7 +83,7 @@ def test_upload_and_analyze_synthetic_audio(client, tmp_path):
         res = client.post(
             "/api/analyze/upload",
             files={"file": ("test_api_audio.wav", f, "audio/wav")},
-            data={"analyze_video_track": "false", "analyze_audio_track": "true", "analyze_fraud_track": "true"}
+            data={"analyze_video_track": "false", "analyze_audio_track": "true"}
         )
 
     assert res.status_code == 200
@@ -96,8 +92,7 @@ def test_upload_and_analyze_synthetic_audio(client, tmp_path):
     assert data["audio_analysis"] is not None
     assert data["audio_analysis"]["status"] == "Completed"
     assert data["audio_analysis"]["classification"] in ["Likely authentic", "Potentially synthetic", "Inconclusive"]
-    assert data["fraud_assessment"] is not None
-    assert not data["fraud_assessment"]["is_suspicious"]
+    assert "fraud_assessment" not in data or data.get("fraud_assessment") is None
 
 def test_alerts_endpoints(client):
     # Fetch alerts

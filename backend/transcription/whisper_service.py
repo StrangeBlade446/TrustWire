@@ -7,6 +7,7 @@ import time
 import logging
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+import av
 import numpy as np
 from pydantic import BaseModel
 from faster_whisper import WhisperModel
@@ -54,6 +55,38 @@ class WhisperTranscriptionService:
     @property
     def is_available(self) -> bool:
         return self.model is not None
+
+    @staticmethod
+    def extract_audio_samples(media_path: Path, target_sr: int = 16000) -> Tuple[Optional[np.ndarray], float]:
+        """Extract audio track from video or audio file using PyAV and resample to 16kHz mono float32."""
+        try:
+            container = av.open(str(media_path))
+            audio_streams = [s for s in container.streams if s.type == 'audio']
+            if not audio_streams:
+                container.close()
+                return None, 0.0
+
+            audio_stream = audio_streams[0]
+            resampler = av.AudioResampler(format='fltp', layout='mono', rate=target_sr)
+            samples_list = []
+
+            for frame in container.decode(audio_stream):
+                resampled = resampler.resample(frame)
+                if resampled:
+                    for r_frame in resampled:
+                        arr = r_frame.to_ndarray()
+                        samples_list.append(arr[0])
+
+            container.close()
+            if not samples_list:
+                return None, 0.0
+
+            full_audio = np.concatenate(samples_list, axis=0).astype(np.float32)
+            duration_sec = len(full_audio) / float(target_sr)
+            return full_audio, duration_sec
+        except Exception as e:
+            logger.warning(f"PyAV audio extraction failed for {media_path}: {e}")
+            return None, 0.0
 
     def transcribe_audio_samples(self, samples_16k: np.ndarray) -> TranscriptionResult:
         """Transcribe an in-memory 16kHz mono float32 audio array."""
@@ -112,7 +145,7 @@ class WhisperTranscriptionService:
             )
 
     def transcribe_file(self, audio_path: Path) -> TranscriptionResult:
-        """Transcribe an audio file from disk."""
+        """Transcribe an audio or video file from disk using direct 16kHz decoding."""
         t0 = time.time()
         if not self.is_available:
             return TranscriptionResult(
@@ -126,10 +159,22 @@ class WhisperTranscriptionService:
             )
 
         try:
-            # For offline media analysis, vad_filter=False ensures background music/effects
-            # in AI generated videos do not cause Silero VAD to drop spoken dialogue.
+            samples_16k, duration_sec = self.extract_audio_samples(audio_path)
+            if samples_16k is None or len(samples_16k) == 0:
+                return TranscriptionResult(
+                    status="Completed",
+                    full_text="",
+                    language="none",
+                    language_probability=0.0,
+                    segments=[],
+                    duration_seconds=0.0,
+                    processing_duration_ms=round((time.time() - t0) * 1000, 2)
+                )
+
+            # Transcribe raw 16kHz float32 samples directly
+            # vad_filter=False ensures dialogue with background music/effects is fully captured
             segments_gen, info = self.model.transcribe(
-                str(audio_path),
+                samples_16k,
                 beam_size=1,
                 vad_filter=False
             )
@@ -152,7 +197,7 @@ class WhisperTranscriptionService:
                 language=info.language,
                 language_probability=round(info.language_probability, 4),
                 segments=segments,
-                duration_seconds=round(info.duration, 2),
+                duration_seconds=round(duration_sec, 2),
                 processing_duration_ms=round((time.time() - t0) * 1000, 2)
             )
         except Exception as e:

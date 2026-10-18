@@ -2,7 +2,7 @@ export interface AlertItem {
   id: string;
   timestamp: number;
   created_at_iso: string;
-  category: 'video_deepfake' | 'audio_deepfake' | 'financial_fraud';
+  category: 'video_deepfake' | 'audio_deepfake';
   severity: 'Informational' | 'Caution' | 'High' | 'Critical';
   title: string;
   explanation: string;
@@ -50,7 +50,6 @@ export interface MonitoringStatus {
   is_monitoring: boolean;
   video_analysis_enabled: boolean;
   audio_analysis_enabled: boolean;
-  fraud_analysis_enabled: boolean;
   screen_source: any;
   audio_source: string;
   frames_captured: number;
@@ -59,12 +58,9 @@ export interface MonitoringStatus {
   audio_chunks_dropped: number;
   video_frames_processed: number;
   audio_chunks_processed: number;
-  transcripts_processed: number;
   recent_activity: {
     last_video_score: number;
     last_audio_score: number;
-    last_fraud_risk: number;
-    last_transcript: string;
   };
   last_activity_seconds_ago: number;
 }
@@ -124,34 +120,11 @@ export interface AudioAnalysisResult {
   limitations: string;
 }
 
-export interface FraudRiskAssessment {
-  is_suspicious: boolean;
-  severity: string;
-  risk_score: number;
-  triggering_phrases: string[];
-  detected_categories: string[];
-  explanation: string;
-  protective_action: string;
-  context_type: string;
-  detection_method: string;
-  timestamp: number;
-}
-
 export interface MediaAnalysisResponse {
   media_filename: string;
   media_type: string;
   video_analysis?: VideoAnalysisResult;
   audio_analysis?: AudioAnalysisResult;
-  transcription?: {
-    status: string;
-    full_text: string;
-    language: string;
-    language_probability: number;
-    segments: Array<{ start_seconds: number; end_seconds: number; text: string }>;
-    duration_seconds: number;
-    processing_duration_ms: number;
-  };
-  fraud_assessment?: FraudRiskAssessment;
   overall_verdict: string;
   processing_time_ms: number;
 }

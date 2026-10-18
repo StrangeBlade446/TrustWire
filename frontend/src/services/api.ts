@@ -57,7 +57,6 @@ export const api = {
   async startMonitoring(params: {
     video_enabled: boolean;
     audio_enabled: boolean;
-    fraud_enabled: boolean;
     monitor_index?: number;
     audio_device_id?: string;
   }) {
@@ -84,14 +83,12 @@ export const api = {
     options: {
       analyze_video_track: boolean;
       analyze_audio_track: boolean;
-      analyze_fraud_track: boolean;
     }
   ): Promise<MediaAnalysisResponse> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('analyze_video_track', String(options.analyze_video_track));
     formData.append('analyze_audio_track', String(options.analyze_audio_track));
-    formData.append('analyze_fraud_track', String(options.analyze_fraud_track));
 
     const res = await fetch(`${API_BASE}/api/analyze/upload`, {
       method: 'POST',

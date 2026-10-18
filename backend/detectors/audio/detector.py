@@ -43,13 +43,30 @@ class AudioDeepfakeDetector:
 
     def __init__(self, model_dir: Optional[Path] = None):
         self.model_dir = Path(model_dir or settings.audio_model_dir)
+        self.session = None
         self.model = None
         self.feature_extractor = None
+        self.model_name = "Wav2Vec2 Sequence Audio Spoofing Classifier"
         self._load_error: Optional[str] = None
         self._initialize_model()
 
     def _initialize_model(self):
-        """Load Wav2Vec2 model and feature extractor."""
+        """Load Wav2Vec2 model (INT8 ONNX preferred, PyTorch fallback)."""
+        onnx_path = self.model_dir / "wav2vec2_large_xlsr_int8.onnx"
+        if onnx_path.exists():
+            try:
+                import onnxruntime as ort
+                sess_options = ort.SessionOptions()
+                sess_options.intra_op_num_threads = 2
+                sess_options.inter_op_num_threads = 1
+                sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+                self.session = ort.InferenceSession(str(onnx_path), sess_options=sess_options, providers=["CPUExecutionProvider"])
+                self.model_name = "Wav2Vec2 Large XLSR Audio Spoofing Classifier (INT8 ONNX)"
+                logger.info("Audio deepfake detector initialized successfully using Wav2Vec2 INT8 ONNX.")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to initialize ONNX audio session: {e}, falling back to PyTorch.")
+
         try:
             safetensors_path = self.model_dir / "model.safetensors"
             if not safetensors_path.exists():
@@ -60,14 +77,15 @@ class AudioDeepfakeDetector:
             self.feature_extractor = AutoFeatureExtractor.from_pretrained(str(self.model_dir))
             self.model = AutoModelForAudioClassification.from_pretrained(str(self.model_dir))
             self.model.eval()
-            logger.info("Audio deepfake detector initialized successfully.")
+            self.model_name = "Wav2Vec2 Sequence Audio Spoofing Classifier"
+            logger.info("Audio deepfake detector initialized successfully using PyTorch.")
         except Exception as e:
             self._load_error = str(e)
             logger.error(f"Failed to initialize audio detector: {e}")
 
     @property
     def is_available(self) -> bool:
-        return self.model is not None and self.feature_extractor is not None
+        return self.session is not None or (self.model is not None and self.feature_extractor is not None)
 
     def decode_audio(self, audio_path: Path, target_sr: int = 16000) -> Tuple[np.ndarray, float]:
         """Decode audio to 16kHz mono float32 numpy array using PyAV."""
@@ -101,10 +119,28 @@ class AudioDeepfakeDetector:
         if not self.is_available:
             return 0.0
 
-        # Silence / near-silence threshold (RMS energy < 0.003)
+        # Silence / ambient threshold (RMS energy < 0.008)
+        # Prevents background ambient hiss/silence from triggering false synthetic scores.
         rms = float(np.sqrt(np.mean(samples_16k ** 2))) if len(samples_16k) > 0 else 0.0
-        if rms < 0.003:
+        if rms < 0.008:
             return 0.0
+
+        if self.session is not None:
+            # Wav2Vec2 Large XLSR ONNX evaluation with zero-mean unit-variance normalization
+            waveform = (samples_16k - float(np.mean(samples_16k))) / float(
+                np.sqrt(np.var(samples_16k) + 1e-7)
+            )
+            input_values = waveform.reshape(1, -1).astype(np.float32)
+            attention_mask = np.ones(input_values.shape, dtype=np.int32)
+            try:
+                out = self.session.run(None, {"input_values": input_values, "attention_mask": attention_mask})
+                logits = out[0][0]
+                shifted = logits - np.max(logits)
+                probs = np.exp(shifted) / np.sum(np.exp(shifted))
+                return float(probs[1])  # Class 0: Real, Class 1: Fake
+            except Exception as e:
+                logger.error(f"ONNX audio inference failure: {e}")
+                return 0.0
 
         tensor_samples = torch.from_numpy(samples_16k).float()
         inputs = self.feature_extractor(tensor_samples, sampling_rate=16000, return_tensors="pt")
@@ -112,9 +148,15 @@ class AudioDeepfakeDetector:
         with torch.no_grad():
             outputs = self.model(**inputs)
             logits = outputs.logits
-            # In the Wav2Vec2 spoofing checkpoint, positive spoof/synthetic speech corresponds to index 1
             probs = torch.softmax(logits, dim=-1)[0]
-            fake_prob = float(probs[1])
+            # Identify fake index dynamically from label2id or default to 0 (fake in checkpoint)
+            fake_idx = 0
+            if hasattr(self.model, "config") and hasattr(self.model.config, "label2id"):
+                for name, idx in self.model.config.label2id.items():
+                    if any(k in name.lower() for k in ["fake", "synthetic", "spoof"]):
+                        fake_idx = int(idx)
+                        break
+            fake_prob = float(probs[fake_idx])
 
         return fake_prob
 
@@ -131,6 +173,7 @@ class AudioDeepfakeDetector:
                 suspicious_time_ranges=[],
                 chunk_evidences=[],
                 evidence_summary=f"Audio detector unavailable: {self._load_error or 'Weights missing'}",
+                model_name=self.model_name,
                 processing_duration_ms=round((time.time() - t0) * 1000, 2)
             )
 
@@ -144,6 +187,7 @@ class AudioDeepfakeDetector:
                 suspicious_time_ranges=[],
                 chunk_evidences=[],
                 evidence_summary=f"Audio file not found: {audio_path}",
+                model_name=self.model_name,
                 processing_duration_ms=round((time.time() - t0) * 1000, 2)
             )
 
@@ -159,6 +203,7 @@ class AudioDeepfakeDetector:
                 suspicious_time_ranges=[],
                 chunk_evidences=[],
                 evidence_summary=f"Audio decoding failure: {str(e)}",
+                model_name=self.model_name,
                 processing_duration_ms=round((time.time() - t0) * 1000, 2)
             )
 
@@ -166,12 +211,15 @@ class AudioDeepfakeDetector:
         stride_size = int(stride_sec * 16000)
 
         chunk_evidences: List[AudioChunkEvidence] = []
+        chunk_rms_list: List[float] = []
         suspicious_ranges: List[List[float]] = []
 
         # If audio is shorter than a single chunk, evaluate the full recording once
         if len(samples) < chunk_size:
+            rms_val = float(np.sqrt(np.mean(samples ** 2))) if len(samples) > 0 else 0.0
+            chunk_rms_list.append(rms_val)
             score = self.analyze_samples(samples)
-            is_susp = score >= 0.65
+            is_susp = score >= 0.70
             chunk_evidences.append(AudioChunkEvidence(
                 start_seconds=0.0,
                 end_seconds=round(total_duration, 2),
@@ -190,8 +238,11 @@ class AudioDeepfakeDetector:
                 start_time = round(start_idx / 16000.0, 2)
                 end_time = round(end_idx / 16000.0, 2)
 
+                rms_val = float(np.sqrt(np.mean(chunk_data ** 2))) if len(chunk_data) > 0 else 0.0
+                chunk_rms_list.append(rms_val)
+
                 score = self.analyze_samples(chunk_data)
-                is_susp = score >= 0.65
+                is_susp = score >= 0.70
 
                 chunk_evidences.append(AudioChunkEvidence(
                     start_seconds=start_time,
@@ -220,30 +271,50 @@ class AudioDeepfakeDetector:
                 suspicious_time_ranges=[],
                 chunk_evidences=[],
                 evidence_summary="Recording was too short to perform acoustic spoofing analysis.",
+                model_name=self.model_name,
                 processing_duration_ms=duration_ms
             )
 
-        # Aggregate chunk scores
-        scores = [c.fake_score for c in chunk_evidences]
-        sorted_scores = sorted(scores, reverse=True)
-        top_k = max(1, int(np.ceil(total_chunks * 0.20)))
-        aggregate_score = float(np.mean(sorted_scores[:top_k]))
-        mean_all_score = float(np.mean(scores))
-        suspicious_chunk_count = len([s for s in scores if s >= 0.65])
-        suspicious_ratio = suspicious_chunk_count / float(total_chunks)
+        # Separate active speech chunks from ambient/silent chunks
+        speech_indices = [i for i, r in enumerate(chunk_rms_list) if r >= 0.008]
+        speech_scores = [chunk_evidences[i].fake_score for i in speech_indices]
 
-        if (aggregate_score >= 0.65 and suspicious_ratio >= 0.30) or (total_chunks == 1 and aggregate_score >= 0.65):
+        # Case 1: No active speech detected (ambient microphone noise or silence)
+        if len(speech_scores) == 0:
+            return AudioAnalysisResult(
+                status="Completed",
+                classification="Likely authentic",
+                confidence_score=0.0,
+                audio_duration_seconds=round(total_duration, 2),
+                chunks_analyzed=total_chunks,
+                suspicious_time_ranges=[],
+                chunk_evidences=chunk_evidences,
+                evidence_summary="Likely authentic: No synthetic voice or neural vocoder patterns detected. Audio consists of natural ambient sound or background silence.",
+                model_name=self.model_name,
+                processing_duration_ms=duration_ms
+            )
+
+        # Case 2: Speech segments present - evaluate only active speech segments
+        sorted_speech = sorted(speech_scores, reverse=True)
+        top_k = max(1, int(np.ceil(len(speech_scores) * 0.25)))
+        aggregate_score = float(np.mean(sorted_speech[:top_k]))
+        mean_speech_score = float(np.mean(speech_scores))
+        suspicious_chunk_count = len([s for s in speech_scores if s >= 0.70])
+        suspicious_ratio = suspicious_chunk_count / float(len(speech_scores))
+
+        # Require aggregate synthetic vocoder anomalies across active speech
+        if (aggregate_score >= 0.70 and suspicious_chunk_count >= 2) or (len(speech_scores) == 1 and aggregate_score >= 0.70):
             classification = "Potentially synthetic"
             summary = (
                 f"Potentially synthetic: {len(suspicious_ranges)} suspicious acoustic segments detected "
-                f"({suspicious_chunk_count}/{total_chunks} segments, peak fake score: {sorted_scores[0]:.2f}, "
+                f"({suspicious_chunk_count}/{len(speech_scores)} active speech segments, peak fake score: {sorted_speech[0]:.2f}, "
                 f"aggregate score: {aggregate_score:.2f}). Acoustic features match synthetic speech generation models."
             )
-        elif aggregate_score < 0.40 and suspicious_ratio < 0.20:
+        elif aggregate_score < 0.35 and suspicious_chunk_count == 0:
             classification = "Likely authentic"
             summary = (
                 f"Likely authentic: No significant synthetic voice or neural vocoder patterns detected "
-                f"across {total_chunks} analyzed segments (mean score: {mean_all_score:.2f}, peak: {sorted_scores[0]:.2f})."
+                f"across {len(speech_scores)} speech segments (mean score: {mean_speech_score:.2f}, peak: {sorted_speech[0]:.2f})."
             )
         else:
             classification = "Inconclusive"
@@ -261,6 +332,7 @@ class AudioDeepfakeDetector:
             suspicious_time_ranges=suspicious_ranges,
             chunk_evidences=chunk_evidences,
             evidence_summary=summary,
+            model_name=self.model_name,
             processing_duration_ms=duration_ms
         )
 

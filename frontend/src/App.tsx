@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Shield,
-  Activity,
-  FileText,
+  Shield,  Activity,
+
   Clock,
   Cpu,
   Lock,
@@ -20,6 +19,8 @@ import { AlertHistory } from './views/AlertHistory';
 import { ModelsPerformance } from './views/ModelsPerformance';
 import { PrivacySettings } from './views/PrivacySettings';
 import { About } from './views/About';
+import { LiveMonitoringOverlay } from './components/LiveMonitoringOverlay';
+import { DisparityAlertPopup } from './components/DisparityAlertPopup';
 import { api } from './services/api';
 import { MonitoringStatus, AlertItem } from './types';
 
@@ -65,8 +66,15 @@ export const App: React.FC = () => {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'NEW_ALERT' && msg.alert) {
-              setIncomingAlert(msg.alert);
-              setTimeout(() => setIncomingAlert(null), 8000);
+              // Only show the popup for live monitoring alerts — not media analysis uploads.
+              // Media analysis results are shown inline in the AnalyzeMedia view.
+              if (msg.alert.source === 'Live Monitoring') {
+                setIncomingAlert(msg.alert);
+                const desktop = (window as any).trustwireDesktop;
+                if (desktop?.sendAlert) {
+                  desktop.sendAlert(msg.alert);
+                }
+              }
             } else if (msg.type === 'PONG' && msg.monitoring) {
               setMonitoringStatus(msg.monitoring);
             }
@@ -98,7 +106,14 @@ export const App: React.FC = () => {
   ];
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background text-gray-200">
+    <div className="flex h-screen w-screen overflow-hidden bg-background text-gray-200 relative">
+      {/* Floating Top Screen Overlay Bar */}
+      <LiveMonitoringOverlay
+        monitoringStatus={monitoringStatus}
+        onStatusChange={setMonitoringStatus}
+        onNavigateToMonitoring={() => setActiveTab('monitoring')}
+      />
+
       {/* Sleek Dark Sidebar */}
       <aside className="w-64 border-r border-border bg-surface flex flex-col justify-between flex-shrink-0">
         <div>
@@ -163,27 +178,34 @@ export const App: React.FC = () => {
 
       {/* Main Content Viewport */}
       <main className="flex-1 overflow-y-auto relative flex flex-col">
-        {/* Real-time In-App Toast Alert */}
-        {incomingAlert && (
-          <div className="absolute top-6 right-6 z-50 max-w-md p-4 rounded-xl border border-rose-500/40 bg-surface shadow-2xl shadow-rose-950/50 animate-bounce space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3 text-rose-400" />
-                {incomingAlert.severity} Alert
-              </span>
-              <span className="text-[11px] text-gray-400 font-mono">{(incomingAlert.confidence_score * 100).toFixed(0)}% Conf</span>
-            </div>
-            <div className="text-xs font-bold text-white">{incomingAlert.title}</div>
-            <p className="text-[11px] text-gray-300">{incomingAlert.explanation}</p>
-            <div className="text-[10px] text-amber-300 bg-amber-500/10 p-1.5 rounded">
-              Action: {incomingAlert.suggested_action}
-            </div>
-          </div>
-        )}
+        {/* Real-time Disparity Alert Pop-up Modal */}
+        <DisparityAlertPopup
+          alert={incomingAlert}
+          onDismiss={() => {
+            setIncomingAlert(null);
+            const desktop = (window as any).trustwireDesktop;
+            if (desktop?.dismissAlert) {
+              desktop.dismissAlert();
+            }
+          }}
+          onPauseMonitoring={async () => {
+            try {
+              await api.stopMonitoring();
+              const updated = await api.getMonitoringStatus();
+              setMonitoringStatus(updated);
+            } catch (e) {}
+          }}
+          onViewAlertHistory={() => setActiveTab('alerts')}
+        />
 
         {/* View Switcher */}
         {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} />}
-        {activeTab === 'monitoring' && <LiveMonitoring />}
+        {activeTab === 'monitoring' && (
+          <LiveMonitoring
+            currentStatus={monitoringStatus}
+            onStatusChange={setMonitoringStatus}
+          />
+        )}
         {activeTab === 'analyze' && <AnalyzeMedia />}
         {activeTab === 'alerts' && <AlertHistory />}
         {activeTab === 'models' && <ModelsPerformance />}

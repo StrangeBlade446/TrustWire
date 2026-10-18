@@ -74,3 +74,41 @@ def test_audio_detector_on_synthetic_wav(tmp_path):
     assert 0.0 <= result.confidence_score <= 1.0
     assert result.classification in ["Likely authentic", "Potentially synthetic", "Inconclusive"]
     assert len(result.evidence_summary) > 10
+
+def test_real_camera_audio_not_flagged_synthetic():
+    """Verify that authentic phone camera video audio is not classified as synthetic."""
+    real_video = Path(r"C:\Users\Administrator\Desktop\data\video\real\PXL_20260510_182411896.mp4")
+    if not real_video.exists():
+        pytest.skip("Real video test fixture not present on this machine")
+
+    result = audio_detector.analyze_audio(real_video)
+    assert result.status == "Completed"
+    assert result.classification == "Likely authentic"
+    assert result.confidence_score < 0.20
+    assert len(result.suspicious_time_ranges) == 0
+
+def test_gemini_generated_video_flagged_manipulated():
+    """Verify that Gemini AI video with SynthID watermark is classified as manipulated."""
+    fake_video = Path(r"C:\Users\Administrator\Downloads\gemini_generated_video_c2d13c29.mp4")
+    if not fake_video.exists():
+        pytest.skip("Gemini video test fixture not present on this machine")
+
+    result = video_detector.analyze_video(fake_video, sample_interval_seconds=1.0)
+    assert result.status == "Completed"
+    assert result.classification == "Potentially manipulated"
+    assert result.confidence_score >= 0.85
+    assert len(result.suspicious_timestamps) > 0
+    assert "manipulated" in result.evidence_summary.lower()
+
+def test_real_camera_video_not_flagged_manipulated():
+    """Verify that authentic smartphone camera recording is classified as likely authentic."""
+    real_video = Path(r"C:\Users\Administrator\Desktop\data\video\real\PXL_20260510_182411896.mp4")
+    if not real_video.exists():
+        pytest.skip("Real video test fixture not present on this machine")
+
+    result = video_detector.analyze_video(real_video, sample_interval_seconds=1.0)
+    assert result.status == "Completed"
+    assert result.classification == "Likely authentic"
+    assert "authentic" in result.evidence_summary.lower()
+
+

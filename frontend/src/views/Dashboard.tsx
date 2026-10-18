@@ -5,14 +5,14 @@ import {
   ShieldCheck,
   Video,
   Mic,
-  FileText,
   Activity,
   HardDrive,
   Clock,
   ArrowRight,
   ExternalLink,
   RefreshCw,
-  AlertTriangle
+  AlertTriangle,
+  Layers
 } from 'lucide-react';
 import { api } from '../services/api';
 import { MonitoringStatus, AlertItem, ModelInfo, PrivacyStatus } from '../types';
@@ -81,7 +81,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             </span>
           </div>
           <p className="text-sm text-gray-400 mt-1">
-            Real-time visual forensics, synthetic voice discrimination, and conversational fraud detection.
+            Real-time visual forensics and synthetic voice discrimination via on-device AI models.
           </p>
         </div>
 
@@ -244,11 +244,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           {/* Quick File Analysis Card */}
           <div className="p-6 rounded-xl border border-border bg-panel space-y-4">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-              <FileText className="w-4 h-4 text-teal-400" />
+              <Layers className="w-4 h-4 text-teal-400" />
               Inspect Media File
             </h3>
             <p className="text-xs text-gray-400">
-              Upload a recorded video (MP4, MKV, WebM) or audio file (WAV, MP3) to run multi-vector deepfake and fraud detection without enabling live screen capture.
+              Upload a recorded video (MP4, MKV, WebM) or audio file (WAV, MP3) to run deepfake detection without enabling live screen capture.
             </p>
             <button
               onClick={() => onNavigate('analyze')}

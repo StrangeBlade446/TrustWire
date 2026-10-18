@@ -29,10 +29,8 @@ from pydantic import BaseModel
 
 from backend.config import settings
 from backend.privacy.retention import retention_manager
-from backend.fraud.engine import fraud_engine, FraudRiskAssessment
 from backend.detectors.video.detector import video_detector, VideoAnalysisResult
 from backend.detectors.audio.detector import audio_detector, AudioAnalysisResult
-from backend.transcription.whisper_service import whisper_service, TranscriptionResult
 from backend.capture.manager import monitoring_coordinator
 from backend.capture.screen import ScreenCaptureWorker
 from backend.capture.audio import AudioLoopbackWorker
@@ -58,7 +56,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="Trustwire Local AI Deception & Fraud Detection Core",
+    description="Trustwire Local AI Deception Detection Core",
     lifespan=lifespan
 )
 
@@ -88,7 +86,6 @@ def verify_token(
 class MonitoringStartRequest(BaseModel):
     video_enabled: bool = True
     audio_enabled: bool = True
-    fraud_enabled: bool = True
     monitor_index: int = 1
     audio_device_id: Optional[str] = None
 
@@ -97,8 +94,6 @@ class MediaAnalysisResponse(BaseModel):
     media_type: str
     video_analysis: Optional[VideoAnalysisResult] = None
     audio_analysis: Optional[AudioAnalysisResult] = None
-    transcription: Optional[TranscriptionResult] = None
-    fraud_assessment: Optional[FraudRiskAssessment] = None
     overall_verdict: str
     processing_time_ms: float
 
@@ -113,8 +108,6 @@ def get_health():
         "models": {
             "video_detector": "Ready" if video_detector.is_available else "Unavailable",
             "audio_detector": "Ready" if audio_detector.is_available else "Unavailable",
-            "whisper_asr": "Ready" if whisper_service.is_available else "Unavailable",
-            "fraud_engine": "Ready"
         }
     }
 
@@ -137,42 +130,16 @@ def get_models_info():
         },
         {
             "id": "audio_deepfake",
-            "name": "Wav2Vec2 Sequence Audio Spoofing Classifier",
+            "name": getattr(audio_detector, "model_name", "Wav2Vec2 Sequence Audio Spoofing Classifier"),
             "version": "2.0.0",
-            "source": "MelodyMachine/Deepfake-audio-detection-V2 (ASVspoof trained)",
+            "source": "pranjal-pravesh/wav2vec2-large-xlsr-deepfake-audio-classification (INT8 ONNX)",
             "checkpoint_available": audio_detector.is_available,
             "status": "Ready" if audio_detector.is_available else "Unavailable",
-            "license": "MIT",
-            "device": "CPU (PyTorch float32)",
-            "input_requirements": "16kHz mono audio chunk, 1.0s to 3.0s sliding window",
-            "measured_inference_ms": 287.0,
-            "limitations": "Detects synthetic speech vocoder artifacts. Does not perform biometric speaker identity verification."
-        },
-        {
-            "id": "speech_transcription",
-            "name": "Local Faster-Whisper ASR (CTranslate2)",
-            "version": "1.2.1",
-            "source": "Systran/faster-whisper (OpenAI Whisper tiny.en/tiny)",
-            "checkpoint_available": whisper_service.is_available,
-            "status": "Ready" if whisper_service.is_available else "Unavailable",
-            "license": "MIT",
-            "device": "CPU (int8 quantized)",
-            "input_requirements": "16kHz mono audio stream or file",
-            "measured_inference_ms": 1140.0,
-            "limitations": "Background noise, heavy accents, or overlapping voices may lead to transcription gaps."
-        },
-        {
-            "id": "fraud_rules_engine",
-            "name": "Context-Aware Social Engineering & Financial Risk Engine",
-            "version": "1.0.0",
-            "source": "Trustwire Native Forensic Rule Taxonomy",
-            "checkpoint_available": True,
-            "status": "Ready",
-            "license": "MIT",
-            "device": "CPU (Compiled Regex & Multi-vector Evaluator)",
-            "input_requirements": "Spoken sentence/phrase transcripts with contextual timestamps",
-            "measured_inference_ms": 0.5,
-            "limitations": "Deterministic advisory taxonomy. Flags suspicious patterns but cannot verify external legal facts."
+            "license": "Apache-2.0",
+            "device": "CPU (ONNX Runtime INT8 SIMD/AVX2)",
+            "input_requirements": "16kHz mono audio chunk, 1.0s to 3.0s sliding window, zero-mean unit-variance normalized",
+            "measured_inference_ms": 140.0,
+            "limitations": "Detects synthetic speech vocoder artifacts and neural voice generation. Does not perform biometric speaker identity verification."
         }
     ]
 
@@ -195,7 +162,6 @@ def start_live_monitoring(req: MonitoringStartRequest):
     monitoring_coordinator.configure(
         video_enabled=req.video_enabled,
         audio_enabled=req.audio_enabled,
-        fraud_enabled=req.fraud_enabled,
         monitor_index=req.monitor_index,
         audio_device_id=req.audio_device_id
     )
@@ -216,7 +182,6 @@ async def upload_and_analyze_media(
     file: UploadFile = File(...),
     analyze_video_track: bool = Form(True),
     analyze_audio_track: bool = Form(True),
-    analyze_fraud_track: bool = Form(True)
 ):
     t0 = time.time()
     ext = Path(file.filename).suffix.lower()
@@ -243,8 +208,6 @@ async def upload_and_analyze_media(
 
     video_res = None
     audio_res = None
-    transcription_res = None
-    fraud_res = None
 
     # Run Video Analysis if requested and is a video file
     if is_video and analyze_video_track:
@@ -280,24 +243,6 @@ async def upload_and_analyze_media(
                 processing_duration_ms=0.0
             )
 
-    # Run Transcription & Fraud Analysis if requested
-    if (is_audio or is_video) and analyze_fraud_track:
-        if whisper_service.is_available:
-            transcription_res = whisper_service.transcribe_file(temp_path)
-            if transcription_res.full_text:
-                fraud_res = fraud_engine.analyze(transcription_res.full_text)
-            else:
-                fraud_res = FraudRiskAssessment(
-                    is_suspicious=False,
-                    severity="Informational",
-                    risk_score=0.0,
-                    triggering_phrases=[],
-                    detected_categories=[],
-                    explanation="No spoken words detected in audio stream.",
-                    protective_action="None required.",
-                    context_type="empty"
-                )
-
     # Dispatch alerts if detections are suspicious
     if video_res and video_res.classification == "Potentially manipulated":
         alert_hub.dispatch_alert(
@@ -325,30 +270,12 @@ async def upload_and_analyze_media(
             suggested_action="Voice characteristics indicate synthetic cloning. Verify via alternate methods."
         )
 
-    if fraud_res and fraud_res.is_suspicious and fraud_res.severity.value in ["High", "Critical", "Caution"]:
-        alert_hub.dispatch_alert(
-            category="financial_fraud",
-            severity=fraud_res.severity.value,
-            title=f"Financial Risk in {file.filename}: {', '.join(fraud_res.detected_categories)}",
-            explanation=fraud_res.explanation,
-            evidence={
-                "triggering_phrases": fraud_res.triggering_phrases,
-                "transcript": transcription_res.full_text if transcription_res else ""
-            },
-            source="Media Analysis",
-            model_or_rule=fraud_res.detection_method,
-            confidence_score=fraud_res.risk_score,
-            suggested_action=fraud_res.protective_action
-        )
-
     # Formulate overall verdict
     verdicts = []
     if video_res and video_res.classification == "Potentially manipulated":
         verdicts.append("Suspicious Video")
     if audio_res and audio_res.classification == "Potentially synthetic":
         verdicts.append("Suspicious Audio")
-    if fraud_res and fraud_res.is_suspicious:
-        verdicts.append(f"Fraud Risk ({fraud_res.severity.value})")
 
     overall = " | ".join(verdicts) if verdicts else "No High-Risk Deception Detected"
 
@@ -359,8 +286,6 @@ async def upload_and_analyze_media(
         media_type="Video" if is_video else "Audio",
         video_analysis=video_res,
         audio_analysis=audio_res,
-        transcription=transcription_res,
-        fraud_assessment=fraud_res,
         overall_verdict=overall,
         processing_time_ms=duration_total_ms
     )
@@ -403,9 +328,16 @@ def purge_temporary_storage():
     purged_count = retention_manager.purge_all()
     return {"status": "purged", "purged_files_count": purged_count}
 
+@app.on_event("startup")
+async def on_app_startup():
+    import asyncio
+    alert_hub.set_event_loop(asyncio.get_running_loop())
+
 # --- WebSocket Real-time Channel ---
 @app.websocket("/api/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    import asyncio
+    alert_hub.set_event_loop(asyncio.get_running_loop())
     await websocket.accept()
     alert_hub.add_subscriber(websocket)
     try:

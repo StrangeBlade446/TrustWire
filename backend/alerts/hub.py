@@ -8,6 +8,7 @@ import json
 import uuid
 import logging
 import threading
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set
 from pydantic import BaseModel, Field
@@ -43,9 +44,14 @@ class AlertHub:
         self._alerts: List[AlertItem] = []
         self._cooldown_map: Dict[str, float] = {}  # key -> last_trigger_timestamp
         self._subscribers: Set[Any] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.store_dir.mkdir(parents=True, exist_ok=True)
         self._history_file = self.store_dir / "alerts_history.json"
         self._load_history()
+
+    def set_event_loop(self, loop: asyncio.AbstractEventLoop):
+        """Set the active asyncio event loop for thread-safe WebSocket broadcasts."""
+        self._loop = loop
 
     def _load_history(self):
         """Load past alert metadata from storage."""
@@ -135,6 +141,19 @@ class AlertHub:
             self._alerts.append(alert)
             self._cooldown_map[dedup_key] = now
             self._save_history()
+
+            # Broadcast over WebSocket only for real-time live monitoring alerts.
+            # Offline media analysis alerts are saved to history but must not trigger live popups.
+            if alert.source == "Live Monitoring":
+                if self._loop and self._loop.is_running():
+                    asyncio.run_coroutine_threadsafe(self.broadcast_alert(alert), self._loop)
+                else:
+                    try:
+                        running_loop = asyncio.get_running_loop()
+                        running_loop.create_task(self.broadcast_alert(alert))
+                    except RuntimeError:
+                        pass
+
             return alert
 
     def get_alerts(self, category: Optional[str] = None, severity: Optional[str] = None, include_dismissed: bool = False) -> List[AlertItem]:
