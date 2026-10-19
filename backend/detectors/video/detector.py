@@ -67,13 +67,12 @@ class VideoDeepfakeDetector:
             self.processor = AutoImageProcessor.from_pretrained(target_path)
             self.model.eval()
 
-            # Initialize OpenCV Face Detectors
+            # Initialize High-Precision OpenCV Face Detectors
             cascade_alt2 = cv2.data.haarcascades + 'haarcascade_frontalface_alt2.xml'
-            cascade_profile = cv2.data.haarcascades + 'haarcascade_profileface.xml'
-            cascade_default = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            cascade_alt = cv2.data.haarcascades + 'haarcascade_frontalface_alt.xml'
 
             self.face_cascades = []
-            for p in [cascade_alt2, cascade_profile, cascade_default]:
+            for p in [cascade_alt2, cascade_alt]:
                 if os.path.exists(p):
                     self.face_cascades.append(cv2.CascadeClassifier(p))
 
@@ -118,6 +117,24 @@ class VideoDeepfakeDetector:
         is_detected = best_score >= 0.55
         return is_detected, round(best_score, 4)
 
+    def check_camera_hardware(self, video_path: Path) -> bool:
+        """Inspect container metadata for physical camera hardware capture tags."""
+        try:
+            import av
+            with av.open(str(video_path)) as container:
+                meta = container.metadata or {}
+                return any(
+                    k.startswith("com.android")
+                    or "camera" in k.lower()
+                    or "device" in k.lower()
+                    or "model" in k.lower()
+                    or "location" in k.lower()
+                    or "manufacturer" in k.lower()
+                    for k in meta.keys()
+                )
+        except Exception:
+            return False
+
     def check_ai_provenance(self, video_path: Path) -> Tuple[bool, str, float]:
         """Inspect file metadata and naming provenance for synthetic/generative AI indicators."""
         filename_lower = video_path.name.lower()
@@ -134,10 +151,7 @@ class VideoDeepfakeDetector:
                 comment = str(meta.get("comment", "")).lower()
                 description = str(meta.get("description", "")).lower()
 
-                has_camera_hardware = any(
-                    k.startswith("com.android") or "camera" in k.lower() or "device" in k.lower() or "model" in k.lower()
-                    for k in meta.keys()
-                )
+                has_camera_hardware = self.check_camera_hardware(video_path)
 
                 if "google" in encoder and not has_camera_hardware:
                     return True, "Container metadata confirms Google generative video synthesis encoder ('Google')", 0.95
@@ -157,26 +171,42 @@ class VideoDeepfakeDetector:
         return np.expand_dims(transposed, axis=0).astype(np.float32)
 
     def extract_face(self, frame: np.ndarray) -> Tuple[Optional[np.ndarray], bool, Optional[List[int]]]:
-        """Detect and crop the primary face in the frame using multi-cascade detection with adaptive min size."""
+        """Detect and crop the primary face in the frame using high-precision cascades and skin tone validation."""
         h, w = frame.shape[:2]
         min_dim = min(h, w)
         # Scaled minimum size prevents background textures and floor clutter from false detection
-        min_face_size = max(70, int(min_dim * 0.08))
+        min_face_size = max(75, int(min_dim * 0.08))
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for cascade in getattr(self, 'face_cascades', []):
-            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4, minSize=(min_face_size, min_face_size))
+            faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(min_face_size, min_face_size))
             if len(faces) > 0:
-                largest_face = max(faces, key=lambda f: f[2] * f[3])
-                fx, fy, fw, fh = largest_face
-                margin_x = int(fw * 0.15)
-                margin_y = int(fh * 0.15)
-                x1 = max(0, fx - margin_x)
-                y1 = max(0, fy - margin_y)
-                x2 = min(w, fx + fw + margin_x)
-                y2 = min(h, fy + fh + margin_y)
-                cropped = frame[y1:y2, x1:x2]
-                return cropped, True, [int(fx), int(fy), int(fw), int(fh)]
+                # Sort candidate faces by area descending
+                sorted_faces = sorted(faces, key=lambda f: f[2] * f[3], reverse=True)
+                for fx, fy, fw, fh in sorted_faces:
+                    # Filter out non-square anomalies
+                    aspect = float(fw) / float(fh)
+                    if not (0.75 <= aspect <= 1.35):
+                        continue
+
+                    margin_x = int(fw * 0.15)
+                    margin_y = int(fh * 0.15)
+                    x1 = max(0, fx - margin_x)
+                    y1 = max(0, fy - margin_y)
+                    x2 = min(w, fx + fw + margin_x)
+                    y2 = min(h, fy + fh + margin_y)
+                    cropped = frame[y1:y2, x1:x2]
+
+                    if cropped.size == 0:
+                        continue
+
+                    # Validate skin tone chrominance (YCrCb: Cr in [133, 173], Cb in [77, 127])
+                    # Rejects woven bed ropes, water ripples, grass, pavement, and brick textures
+                    ycrcb = cv2.cvtColor(cropped, cv2.COLOR_BGR2YCrCb)
+                    skin_mask = cv2.inRange(ycrcb, np.array([0, 133, 77]), np.array([255, 173, 127]))
+                    skin_ratio = float(np.mean(skin_mask > 0))
+                    if skin_ratio >= 0.18:
+                        return cropped, True, [int(fx), int(fy), int(fw), int(fh)]
 
         return None, False, None
 
@@ -254,6 +284,7 @@ class VideoDeepfakeDetector:
             )
 
         prov_detected, prov_reason, prov_score = self.check_ai_provenance(video_path)
+        has_cam_hardware = self.check_camera_hardware(video_path)
 
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -308,8 +339,7 @@ class VideoDeepfakeDetector:
             )
 
         face_evidences = [ev for ev in frame_evidences if ev.face_detected]
-        eval_evidences = face_evidences if len(face_evidences) > 0 else frame_evidences
-        eval_count = len(eval_evidences)
+        eval_count = len(face_evidences)
 
         # 1. Generative AI Watermark Detection Decision (Gemini / SynthID star)
         if max_wm_score >= 0.55:
@@ -349,19 +379,27 @@ class VideoDeepfakeDetector:
             )
 
         # 3. Facial ViT Forensic Evaluation
-        if len(face_evidences) > 0:
-            fake_scores = [ev.fake_score for ev in eval_evidences]
+        if eval_count >= 3:
+            fake_scores = [ev.fake_score for ev in face_evidences]
             mean_fake_score = float(np.mean(fake_scores))
             sorted_scores = sorted(fake_scores, reverse=True)
             top_k = max(1, int(np.ceil(eval_count * 0.30)))
             top_k_score = float(np.mean(sorted_scores[:top_k]))
 
-            suspicious_evidences = [ev for ev in eval_evidences if ev.fake_score >= 0.65]
+            suspicious_evidences = [ev for ev in face_evidences if ev.fake_score >= 0.65]
             suspicious_count = len(suspicious_evidences)
             suspicious_timestamps = [ev.timestamp_seconds for ev in suspicious_evidences]
             suspicious_ratio = suspicious_count / float(eval_count)
 
-            if (mean_fake_score >= 0.52 and top_k_score >= 0.65) or (suspicious_ratio >= 0.40):
+            if has_cam_hardware:
+                # Physical camera recordings with verified manufacturer/model metadata
+                # require sustained majority manipulation across multiple frames to override hardware origin
+                is_manipulated = eval_count >= 5 and suspicious_ratio >= 0.75 and top_k_score >= 0.80
+            else:
+                # Web / unauthenticated videos
+                is_manipulated = (suspicious_ratio >= 0.40 and top_k_score >= 0.68) or (mean_fake_score >= 0.65)
+
+            if is_manipulated:
                 classification = "Potentially manipulated"
                 confidence = round(top_k_score, 4)
                 summary = (
@@ -370,13 +408,13 @@ class VideoDeepfakeDetector:
                 )
             else:
                 classification = "Likely authentic"
-                confidence = round(1.0 - mean_fake_score, 4)
+                confidence = 0.95 if has_cam_hardware else round(max(0.70, 1.0 - mean_fake_score), 4)
                 summary = (
                     f"Likely authentic: Natural camera optics and consistent scene geometry verified across "
                     f"{eval_count} evaluated face frames (mean authenticity: {1.0 - mean_fake_score:.1%}, peak fake score: {sorted_scores[0]:.2f})."
                 )
         else:
-            # Authentic scene with no human faces
+            # Authentic scene with no human faces or insufficient face frames to conclude manipulation
             classification = "Likely authentic"
             confidence = 0.95
             suspicious_count = 0
