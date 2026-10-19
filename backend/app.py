@@ -47,6 +47,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"Trustwire API Server started on {settings.host}:{settings.port}")
     logger.info(f"Security Capability Token: {settings.api_token}")
     retention_manager.run_startup_recovery()
+    import asyncio
+    alert_hub.set_event_loop(asyncio.get_running_loop())
     yield
     logger.info("Trustwire API Server shutting down...")
     monitoring_coordinator.stop_monitoring()

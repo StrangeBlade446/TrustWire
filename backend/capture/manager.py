@@ -62,6 +62,29 @@ class LiveMonitoringCoordinator:
                     loop_active = True
                     self.total_video_frames_processed += 1
                     evidence = video_detector.analyze_frame(frame_bgr, timestamp_seconds=time.time())
+
+                    # If watermark was not in desktop bottom-right, check active foreground window sub-region
+                    if evidence.fake_score < 0.85:
+                        try:
+                            import ctypes
+                            from ctypes import wintypes
+                            user32 = ctypes.windll.user32
+                            hwnd = user32.GetForegroundWindow()
+                            if hwnd:
+                                rect = wintypes.RECT()
+                                user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                                wl = max(0, rect.left)
+                                wt = max(0, rect.top)
+                                wr = min(frame_bgr.shape[1], rect.right)
+                                wb = min(frame_bgr.shape[0], rect.bottom)
+                                if (wr - wl) >= 200 and (wb - wt) >= 150:
+                                    win_crop = frame_bgr[wt:wb, wl:wr]
+                                    has_wm_win, wm_score_win = video_detector.detect_watermark(win_crop)
+                                    if has_wm_win:
+                                        evidence.fake_score = max(evidence.fake_score, 0.96)
+                        except Exception:
+                            pass
+
                     self.recent_activity["last_video_score"] = evidence.fake_score
                     self.last_activity_timestamp = time.time()
 
@@ -104,13 +127,13 @@ class LiveMonitoringCoordinator:
                     self.total_audio_chunks_processed += 1
                     self.last_activity_timestamp = time.time()
 
-                    # Audio Deepfake Analysis
+                    # Audio Deepfake Analysis (synchronized with media analyzer threshold)
                     if audio_detector.is_available and has_signal:
                         try:
                             score = audio_detector.analyze_samples(samples)
                             self.recent_activity["last_audio_score"] = round(score, 4)
 
-                            if score >= 0.80:
+                            if score >= 0.65:
                                 severity = "Critical" if score >= 0.85 else "High"
                                 alert_hub.dispatch_alert(
                                     category="audio_deepfake",
