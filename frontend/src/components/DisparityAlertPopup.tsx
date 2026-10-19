@@ -7,7 +7,8 @@ import {
   Pause,
   ExternalLink,
   CheckCircle2,
-  AlertOctagon
+  AlertOctagon,
+  ShieldAlert
 } from 'lucide-react';
 import { AlertItem } from '../types';
 
@@ -24,8 +25,13 @@ export const DisparityAlertPopup: React.FC<DisparityAlertPopupProps> = ({
   onPauseMonitoring,
   onViewAlertHistory
 }) => {
+  // Auto-dismiss after 12 seconds
   useEffect(() => {
     if (!alert) return;
+
+    const timer = setTimeout(() => {
+      onDismiss();
+    }, 12000);
 
     // Optional audio chime on alert arrival
     try {
@@ -45,145 +51,118 @@ export const DisparityAlertPopup: React.FC<DisparityAlertPopupProps> = ({
         osc.stop(ctx.currentTime + 0.5);
       }
     } catch (e) {}
-  }, [alert?.id]);
+
+    return () => clearTimeout(timer);
+  }, [alert?.id, onDismiss]);
 
   if (!alert) return null;
 
-  // Determine which of the 2 disparities was detected
   const isVideoDisparity = alert.category === 'video_deepfake';
-  const isAudioDisparity = alert.category === 'audio_deepfake';
 
   const disparityConfig = isVideoDisparity
     ? {
-        typeNumber: 'DISPARITY 1 OF 2',
-        typeName: 'Visual / Deepfake Video Disparity',
-        typeSubtitle: 'Facial Tampering or Synthetic Generative Artifacts Detected',
-        themeBorder: 'border-rose-500/50',
-        themeBg: 'bg-rose-500/10',
-        themeBadge: 'bg-rose-500/20 text-rose-300 border-rose-500/30',
-        themeGlow: 'shadow-rose-950/60',
+        tagText: 'VISUAL DISPARITY · 1 OF 2',
+        title: 'Visual / Deepfake Video Disparity',
+        borderClass: 'border-rose-500/40 hover:border-rose-500/60',
+        badgeClass: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
+        glowClass: 'shadow-[0_12px_40px_rgba(244,63,94,0.22)]',
+        accentText: 'text-rose-400',
         Icon: FileVideo,
-        iconColor: 'text-rose-400'
       }
     : {
-        typeNumber: 'DISPARITY 2 OF 2',
-        typeName: 'Acoustic / Synthetic Audio Disparity',
-        typeSubtitle: 'Voice Cloning or Neural Speech Spoofing Detected in Playback',
-        themeBorder: 'border-cyan-500/50',
-        themeBg: 'bg-cyan-500/10',
-        themeBadge: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
-        themeGlow: 'shadow-cyan-950/60',
+        tagText: 'ACOUSTIC DISPARITY · 2 OF 2',
+        title: 'Acoustic / Synthetic Speech Disparity',
+        borderClass: 'border-cyan-500/40 hover:border-cyan-500/60',
+        badgeClass: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30',
+        glowClass: 'shadow-[0_12px_40px_rgba(6,182,212,0.22)]',
+        accentText: 'text-cyan-400',
         Icon: FileAudio,
-        iconColor: 'text-cyan-400'
       };
 
-  const { typeNumber, typeName, typeSubtitle, themeBorder, themeBadge, themeGlow, Icon, iconColor } = disparityConfig;
+  const { tagText, title, borderClass, badgeClass, glowClass, accentText, Icon } = disparityConfig;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+    <div className="fixed top-4 right-4 z-50 w-full max-w-md animate-in slide-in-from-top-3 fade-in duration-200 pointer-events-auto">
       <div
-        className={`w-full max-w-lg rounded-2xl bg-[#0F1216] border ${themeBorder} shadow-2xl ${themeGlow} p-6 space-y-5 animate-in zoom-in-95 duration-200`}
-        role="alertdialog"
-        aria-modal="true"
+        className={`rounded-xl bg-[#151a20]/95 backdrop-blur-xl border ${borderClass} ${glowClass} p-4 space-y-3 transition-all`}
+        role="alert"
       >
-        {/* Header: Disparity Identification & Close Button */}
-        <div className="flex items-start justify-between gap-3 pb-3 border-b border-border/60">
-          <div className="flex items-center gap-3">
-            <div className={`p-2.5 rounded-xl bg-surface border border-white/10 ${iconColor} shadow-inner`}>
-              <Icon className="w-6 h-6 animate-pulse" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-wider uppercase border ${themeBadge}`}>
-                  {typeNumber}
-                </span>
-                <span className="text-xs font-mono text-gray-400">
-                  {(alert.confidence_score * 100).toFixed(0)}% Confidence
-                </span>
-              </div>
-              <h2 className="text-base font-bold text-white tracking-tight mt-0.5">
-                {typeName}
-              </h2>
-            </div>
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-wider uppercase border ${badgeClass}`}>
+              {tagText}
+            </span>
+            <span className="text-[11px] font-mono text-gray-400">
+              {Math.round((alert.confidence_score || 0) * 100)}% Confidence
+            </span>
           </div>
 
           <button
             onClick={onDismiss}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-surface transition-colors"
+            className="p-1 rounded-md text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
             title="Dismiss Alert"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Observation Subtitle */}
-        <div className="text-xs text-gray-400 font-medium">
-          {typeSubtitle}
-        </div>
-
-        {/* Forensic Disparity Details */}
-        <div className="space-y-3 p-4 rounded-xl bg-surface/80 border border-border text-xs leading-relaxed">
-          <div className="font-semibold text-white flex items-center gap-2">
-            <AlertTriangle className={`w-4 h-4 ${iconColor}`} />
-            <span>{alert.title}</span>
+        {/* Title and Icon */}
+        <div className="flex items-start gap-2.5">
+          <div className={`p-2 rounded-lg bg-surface border border-white/10 ${accentText} mt-0.5 flex-shrink-0`}>
+            <Icon className="w-4 h-4 animate-pulse" />
           </div>
-
-          <p className="text-gray-300">
-            {alert.explanation}
-          </p>
-
-          {/* Triggering Evidence if present */}
-          {alert.evidence && alert.evidence.fake_score !== undefined && (
-            <div className="pt-2 border-t border-border/50 text-[11px] font-mono text-gray-400 space-y-1">
-              <div>
-                <span className="text-gray-400 font-semibold">Forensic Disparity Score: </span>
-                <span className="text-white">{(alert.evidence.fake_score * 100).toFixed(1)}%</span>
-              </div>
-            </div>
-          )}
+          <div>
+            <h3 className="text-sm font-bold text-white tracking-tight leading-snug">
+              {alert.title}
+            </h3>
+            <p className="text-xs text-gray-300 mt-1 leading-relaxed">
+              {alert.explanation}
+            </p>
+          </div>
         </div>
 
-        {/* Recommended Action Pill */}
-        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-start gap-2.5">
-          <AlertOctagon className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <strong className="block text-white font-medium mb-0.5">Recommended Protective Action:</strong>
+        {/* Action Recommendation Banner */}
+        <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-xs text-amber-200/90 flex items-start gap-2">
+          <AlertOctagon className="w-3.5 h-3.5 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="leading-tight">
+            <span className="font-semibold text-white">Recommended Action: </span>
             {alert.suggested_action}
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-          {onPauseMonitoring ? (
+        {/* Bottom Actions Row */}
+        <div className="flex items-center justify-between gap-2 pt-1">
+          {onPauseMonitoring && (
             <button
               onClick={() => {
                 onPauseMonitoring();
                 onDismiss();
               }}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-white/10 hover:bg-amber-500/20 text-gray-200 hover:text-amber-300 border border-white/15 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/5 hover:bg-amber-500/20 text-gray-300 hover:text-amber-300 border border-white/10 transition-colors"
             >
-              <Pause className="w-3.5 h-3.5" />
-              <span>Pause Monitoring</span>
+              <Pause className="w-3 h-3" />
+              <span>Pause</span>
             </button>
-          ) : <div />}
+          )}
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex items-center gap-2 ml-auto">
             {onViewAlertHistory && (
               <button
                 onClick={() => {
                   onViewAlertHistory();
                   onDismiss();
                 }}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold bg-surface hover:bg-panel text-gray-300 hover:text-white border border-border transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-surface hover:bg-panel text-gray-300 hover:text-white border border-border transition-colors"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>Alert History</span>
+                <ExternalLink className="w-3 h-3" />
+                <span>History</span>
               </button>
             )}
 
             <button
               onClick={onDismiss}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-5 py-2 rounded-xl text-xs font-semibold bg-teal-500 hover:bg-teal-400 text-black shadow-lg shadow-teal-500/20 transition-all"
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-teal-500 hover:bg-teal-400 text-black shadow-md shadow-teal-500/20 transition-all"
             >
               <CheckCircle2 className="w-3.5 h-3.5" />
               <span>Acknowledge</span>

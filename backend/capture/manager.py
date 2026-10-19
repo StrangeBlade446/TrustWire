@@ -9,6 +9,9 @@ import logging
 import threading
 from typing import Dict, Any, Optional
 
+import cv2
+import numpy as np
+
 from backend.capture.screen import ScreenCaptureWorker
 from backend.capture.audio import AudioLoopbackWorker
 from backend.detectors.video.detector import video_detector
@@ -63,27 +66,58 @@ class LiveMonitoringCoordinator:
                     self.total_video_frames_processed += 1
                     evidence = video_detector.analyze_frame(frame_bgr, timestamp_seconds=time.time())
 
-                    # If watermark was not in desktop bottom-right, check active foreground window sub-region
+                    # If watermark was not in desktop bottom-right, inspect visible windows and screen regions for generative watermark
                     if evidence.fake_score < 0.85:
                         try:
                             import ctypes
                             from ctypes import wintypes
                             user32 = ctypes.windll.user32
-                            hwnd = user32.GetForegroundWindow()
-                            if hwnd:
-                                rect = wintypes.RECT()
-                                user32.GetWindowRect(hwnd, ctypes.byref(rect))
-                                wl = max(0, rect.left)
-                                wt = max(0, rect.top)
-                                wr = min(frame_bgr.shape[1], rect.right)
-                                wb = min(frame_bgr.shape[0], rect.bottom)
-                                if (wr - wl) >= 200 and (wb - wt) >= 150:
-                                    win_crop = frame_bgr[wt:wb, wl:wr]
-                                    has_wm_win, wm_score_win = video_detector.detect_watermark(win_crop)
-                                    if has_wm_win:
-                                        evidence.fake_score = max(evidence.fake_score, 0.96)
-                        except Exception:
-                            pass
+                            ScreenCaptureWorker._attach_thread_desktop()
+
+                            win_rects = []
+                            def _enum_cb(hwnd, _):
+                                if user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd):
+                                    rect = wintypes.RECT()
+                                    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+                                    w = rect.right - rect.left
+                                    h = rect.bottom - rect.top
+                                    if w >= 240 and h >= 160:
+                                        win_rects.append((max(0, rect.left), max(0, rect.top), min(frame_bgr.shape[1], rect.right), min(frame_bgr.shape[0], rect.bottom)))
+                                return True
+
+                            cb = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)(_enum_cb)
+                            user32.EnumWindows(cb, 0)
+
+                            tmpl = getattr(video_detector, "watermark_template", None)
+                            if tmpl is not None:
+                                th, tw = tmpl.shape[:2]
+                                for (wl, wt, wr, wb) in win_rects[:6]:
+                                    win_w = wr - wl
+                                    win_h = wb - wt
+                                    if win_w < 180 or win_h < 120:
+                                        continue
+                                    crop_y1 = wt + int(win_h * 0.60)
+                                    crop_x1 = wl + int(win_w * 0.60)
+                                    roi = frame_bgr[crop_y1:wb, crop_x1:wr]
+                                    if roi.size == 0 or roi.shape[0] < 20 or roi.shape[1] < 20:
+                                        continue
+
+                                    gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+                                    canny_roi = cv2.Canny(gray_roi, 30, 90)
+
+                                    for sc in (0.4, 0.5, 0.6, 0.7, 0.85, 1.0, 1.15):
+                                        st_w, st_h = int(tw * sc), int(th * sc)
+                                        if canny_roi.shape[0] < st_h or canny_roi.shape[1] < st_w:
+                                            continue
+                                        s_tmpl = cv2.resize(tmpl, (st_w, st_h), interpolation=cv2.INTER_LINEAR)
+                                        res = cv2.matchTemplate(canny_roi, s_tmpl, cv2.TM_CCOEFF_NORMED)
+                                        if float(np.max(res)) >= 0.55:
+                                            evidence.fake_score = max(evidence.fake_score, 0.96)
+                                            break
+                                    if evidence.fake_score >= 0.85:
+                                        break
+                        except Exception as wme:
+                            logger.debug(f"Window watermark scan exception: {wme}")
 
                     self.recent_activity["last_video_score"] = evidence.fake_score
                     self.last_activity_timestamp = time.time()

@@ -268,20 +268,8 @@ function createOverlayWindow() {
 // IPC Handlers for Windows Screen Overlay Integration
 ipcMain.on('monitoring-state-changed', (event, state) => {
   lastMonitoringState = state;
-  if (state && state.is_monitoring) {
-    if (!overlayWindow || overlayWindow.isDestroyed()) {
-      createOverlayWindow();
-    }
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.showInactive();
-      overlayWindow.webContents.send('state-update', state);
-    }
-  } else {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.webContents.send('state-update', { is_monitoring: false });
-      overlayWindow.hide();
-    }
-  }
+  // Electron does not pop up a duplicate secondary window over the screen;
+  // all monitoring controls and live alerts are managed through the unified UI.
 });
 
 ipcMain.on('overlay-action', (event, action) => {
@@ -342,37 +330,6 @@ ipcMain.on('disparity-alert', (event, alert) => {
   } catch (e) {
     console.error('[Trustwire Desktop] Notification toast error:', e);
   }
-
-  // 2. Expand Native Windows Floating Overlay Window to display Disparity Card (ONLY if monitoring is active)
-  if (lastMonitoringState && lastMonitoringState.is_monitoring && overlayWindow && !overlayWindow.isDestroyed()) {
-    try {
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width } = primaryDisplay.workAreaSize;
-      const overlayWidth = 500;
-      const overlayHeight = 175;
-      const x = Math.round((width - overlayWidth) / 2);
-      overlayWindow.setBounds({ x, y: 14, width: overlayWidth, height: overlayHeight });
-      overlayWindow.showInactive();
-      overlayWindow.webContents.send('disparity-alert', alert);
-    } catch (err) {
-      console.error('[Trustwire Desktop] Failed to expand overlay window:', err);
-    }
-  }
-});
-
-ipcMain.on('dismiss-overlay-alert', () => {
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    try {
-      const primaryDisplay = screen.getPrimaryDisplay();
-      const { width } = primaryDisplay.workAreaSize;
-      const overlayWidth = 470;
-      const overlayHeight = 56;
-      const x = Math.round((width - overlayWidth) / 2);
-      overlayWindow.setBounds({ x, y: 14, width: overlayWidth, height: overlayHeight });
-    } catch (err) {
-      console.error('[Trustwire Desktop] Failed to restore overlay bounds:', err);
-    }
-  }
 });
 
 app.whenReady().then(async () => {
@@ -395,9 +352,6 @@ app.whenReady().then(async () => {
         console.error('[Trustwire Desktop] Failed to load frontend HTML:', err);
       });
     }
-
-    // Prepare overlay window
-    createOverlayWindow();
   } catch (err) {
     console.error('[Trustwire Desktop] Backend initialization timed out:', err);
     if (mainWindow && !mainWindow.isDestroyed()) {

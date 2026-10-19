@@ -275,13 +275,17 @@ export const LiveMonitoring: React.FC<LiveMonitoringProps> = ({ currentStatus, o
                 <div className="p-6 text-center text-xs text-gray-500">No manipulated video artifacts detected.</div>
               ) : (
                 videoAlerts.map(a => (
-                  <div key={a.id} className="p-3 rounded-lg bg-surface border border-border space-y-1.5 text-xs">
+                  <div key={a.id} className="p-3.5 rounded-xl bg-surface border border-rose-500/25 border-l-4 border-l-rose-500 space-y-2 text-xs">
                     <div className="flex justify-between items-center">
-                      <span className="font-semibold text-rose-400">{a.severity}</span>
-                      <span className="text-gray-500 font-mono text-[10px]">{a.created_at_iso.split(' ')[1]}</span>
+                      <span className="font-bold text-rose-400 tracking-wide uppercase text-[10px] font-mono px-2 py-0.5 rounded bg-rose-500/10 border border-rose-500/20">{a.severity}</span>
+                      <span className="text-gray-400 font-mono text-[10px]">{a.created_at_iso.split(' ')[1]}</span>
                     </div>
-                    <p className="text-gray-300">{a.title}</p>
-                    <div className="text-[11px] text-teal-300 font-mono">Confidence: {(a.confidence_score * 100).toFixed(0)}%</div>
+                    <p className="text-white font-medium">{a.title}</p>
+                    <p className="text-gray-300 text-[11px] leading-relaxed">{a.explanation}</p>
+                    <div className="text-[11px] text-teal-300 font-mono flex items-center justify-between pt-1 border-t border-border/40">
+                      <span>Confidence: {(a.confidence_score * 100).toFixed(0)}%</span>
+                      <span className="text-gray-400 text-[10px] truncate max-w-[200px]" title={a.suggested_action}>Action: {a.suggested_action}</span>
+                    </div>
                   </div>
                 ))
               )}
@@ -302,13 +306,17 @@ export const LiveMonitoring: React.FC<LiveMonitoringProps> = ({ currentStatus, o
                 <div className="p-6 text-center text-xs text-gray-500">No synthetic voice artifacts detected.</div>
               ) : (
                 audioAlerts.map(a => (
-                  <div key={a.id} className="p-3 rounded-lg bg-surface border border-border space-y-1.5 text-xs">
+                  <div key={a.id} className="p-3.5 rounded-xl bg-surface border border-cyan-500/25 border-l-4 border-l-cyan-500 space-y-2 text-xs">
                     <div className="flex justify-between items-center">
-                      <span className="font-semibold text-rose-400">{a.severity}</span>
-                      <span className="text-gray-500 font-mono text-[10px]">{a.created_at_iso.split(' ')[1]}</span>
+                      <span className="font-bold text-cyan-400 tracking-wide uppercase text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">{a.severity}</span>
+                      <span className="text-gray-400 font-mono text-[10px]">{a.created_at_iso.split(' ')[1]}</span>
                     </div>
-                    <p className="text-gray-300">{a.title}</p>
-                    <div className="text-[11px] text-cyan-300 font-mono">Confidence: {(a.confidence_score * 100).toFixed(0)}%</div>
+                    <p className="text-white font-medium">{a.title}</p>
+                    <p className="text-gray-300 text-[11px] leading-relaxed">{a.explanation}</p>
+                    <div className="text-[11px] text-cyan-300 font-mono flex items-center justify-between pt-1 border-t border-border/40">
+                      <span>Confidence: {(a.confidence_score * 100).toFixed(0)}%</span>
+                      <span className="text-gray-400 text-[10px] truncate max-w-[200px]" title={a.suggested_action}>Action: {a.suggested_action}</span>
+                    </div>
                   </div>
                 ))
               )}
