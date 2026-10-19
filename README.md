@@ -9,20 +9,10 @@
 
 **Trustwire** is an autonomous, on-device AI deception defense system and forensic deepfake shield built for Windows. It provides real-time active system monitoring and offline media analysis to protect users against generative AI deepfakes, synthetic speech cloning, and generative watermark tampering.
 
-Developed for **Reforged '26** under the **AI/ML, Cybersecurity & Digital Trust** track by team **the omniscient**.
+Developed for **Reforged '26** under the **AI/ML, Cybersecurity & Digital Trust** track.
 
 ---
 
-## 👥 Team Information — the omniscient
-
-- **Rudra Veer Singh**
-- **Daksh Pratap Singh**
-- **Shivaksh Arya**
-- **Suhel Khan**
-
-*Official Pitch Deck:* [`TrustWire_Presentation_The_Omniscient.pptx`](TrustWire_Presentation_The_Omniscient.pptx)
-
----
 
 ## 🛡️ Core Capabilities
 
@@ -72,7 +62,7 @@ Trustwire runs as a 4-tier paired architecture:
 
 ### 1. Clone the Repository
 ```powershell
-git clone https://github.com/hash-StrangeBlade/TrustWire.git
+git clone https://github.com/StrangeBlade446/TrustWire.git
 cd TrustWire
 ```
 
