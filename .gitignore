@@ -46,6 +46,8 @@ desktop/dist/
 *.exe
 *.msi
 *.zip
+*.pptx
+*.ppt
 
 # Temporary media & security cache (STRICT PRIVACY)
 temp_media/
