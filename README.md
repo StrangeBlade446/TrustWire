@@ -14,7 +14,7 @@ Developed for **Reforged '26** under the **AI/ML, Cybersecurity & Digital Trust*
 ---
 
 
-## 🛡️ Core Capabilities
+## Core Capabilities
 
 1. **Deepfake Video Detection:**
    - Evaluates video frames and facial regions using a fine-tuned **Vision Transformer (ViT)** (`224x224 RGB`, ~205ms CPU inference).
@@ -37,7 +37,7 @@ Developed for **Reforged '26** under the **AI/ML, Cybersecurity & Digital Trust*
 
 ---
 
-## 🏗️ Technical Architecture
+## Technical Architecture
 
 Trustwire runs as a 4-tier paired architecture:
 - **Tier 1 (Capture & Ingest):** Screen capture worker (`mss` with 1-element queue to prevent lag), soundcard WASAPI loopback audio capture, and PyAV demuxer.
@@ -47,7 +47,7 @@ Trustwire runs as a 4-tier paired architecture:
 
 ---
 
-## 💻 System Requirements
+## System Requirements
 
 - **Operating System:** Windows 10 or Windows 11 x64 (Windows 11 recommended).
 - **Processor:** Modern x64 multi-core processor (Intel Core i5/i7/i9 or AMD Ryzen).
@@ -58,7 +58,7 @@ Trustwire runs as a 4-tier paired architecture:
 
 ---
 
-## 🚀 Installation & Launch Instructions
+## Installation & Launch Instructions
 
 ### 1. Clone the Repository
 ```powershell
@@ -96,7 +96,7 @@ npm start
 
 ---
 
-## 📊 Model Provenance & Citations
+## Model Provenance & Citations
 
 | Capability | Architecture | Upstream / Citation | License | Device / Latency |
 |------------|--------------|---------------------|---------|------------------|
@@ -108,7 +108,7 @@ For complete documentation on model boundaries and third-party terms, see [`docs
 
 ---
 
-## 🧪 Automated Testing
+## Automated Testing
 
 Trustwire includes a comprehensive automated test suite verifying endpoints, calibration thresholds, and detector performance:
 
@@ -123,7 +123,7 @@ python -m pytest tests/test_api.py
 
 ---
 
-## 🔒 Privacy & Data Retention Guarantees
+## Privacy & Data Retention Guarantees
 
 - **15-Minute Strict Retention:** Diagnostic artifacts expire and are deleted within 15 minutes.
 - **Startup Crash Recovery:** Any stranded temp files from previous sessions are purged on launch.
